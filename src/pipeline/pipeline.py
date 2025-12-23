@@ -56,19 +56,17 @@ class PipelineConfig:
     def __init__(
         self,
         name,
-        anthropic_num_threads=2,
         openai_fraction_rate_limit=0.99,
         use_cache=True,
         language=Language.PYTHON,
         num_problems=None,
         problem_ids=None,
         num_open_files=1000000,
-        organization="NYU_ORG",
+        organization=None,
         print_prompt_and_response=False,
         api_base=None,
     ):
         self.name = name
-        self.anthropic_num_threads = anthropic_num_threads
         self.openai_fraction_rate_limit = openai_fraction_rate_limit
         self.organization = organization
         self.print_prompt_and_response = print_prompt_and_response
@@ -88,7 +86,6 @@ class Pipeline:
         self.step_names = set()
         self.results = {}
         self.model_api = ModelAPI(
-            self.config.anthropic_num_threads,
             self.config.openai_fraction_rate_limit,
             self.config.organization,
             self.config.print_prompt_and_response,

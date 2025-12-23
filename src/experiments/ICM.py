@@ -9,6 +9,7 @@ from tqdm import tqdm
 import numpy as np
 from datasets import load_dataset
 import argparse
+import matplotlib.pyplot as plt
 
 from core.llm_api.llm import ModelAPI
 from core.utils import setup_environment
@@ -21,6 +22,7 @@ from src.experiments.ICM_tools import (
 from src.model_querying.prompt_creation import (
     get_decision_prompt,
     get_judge_prompt_fewshot,
+    get_judge_prompt_zeroshot
 )
 from src.model_querying.solution_extraction import (
     extract_claim_logprobs,
@@ -60,8 +62,7 @@ def calculate_accuracy(train_data, inconsistent_pairs):
             [i["label"] for i in train_data.values()]
         ),
         "train_prob": train_prob,
-        "train_size": len(train_data),
-        "inconsistent_num": len(inconsistent_pairs),
+        "train_size": len(train_data)
     }
 
 
@@ -72,71 +73,6 @@ def update_assign(data):
         else:
             value["label"] = 0
     return data
-
-
-def fix_inconsistency(demonstrations, cur_metric, name, alpha, iter=0, K=20):
-    backup_metric = deepcopy(cur_metric)
-    if cur_metric["inconsistent_num"] == 0:
-        return demonstrations, cur_metric
-
-    cur_pool = {k: v for k, v in demonstrations.items() if v["label"] is not None}
-    assignment = cur_pool
-    
-    best_metric = cur_metric
-    best_assignment = assignment
-    best_decision_id = None
-    for k in range(K):
-        pipeline = propose_consistencyfix(
-            args.model,
-            name=name,
-            iter=f"{iter}-{k}",
-            assignment=assignment,
-        )
-        results = asyncio.run(pipeline.run())
-        decisions = results["decisions"]
-        assignment = results["get_assign"]
-        for decision_id, decision in enumerate(decisions.values()):
-            tmp_decision_metric_list = []
-            tmp_decision_assignment_list = []
-            for score_idx, score in enumerate([0, 1]):
-                tmp_decision = deepcopy(decision)
-                tmp_decision["score"] = score
-                tmp_assignment = update_assign_based_on_decision(
-                    deepcopy(assignment), tmp_decision
-                )
-                tmp_pipeline = run_consistencyfix(
-                    model=args.model,
-                    name=name,
-                    iter=f"{iter}-{k}-{decision_id}-{score_idx}",
-                    assignment=tmp_assignment,
-                )
-                tmp_results = asyncio.run(tmp_pipeline.run())
-                tmp_metric = tmp_results["evaluate"]
-                tmp_decision_metric_list.append(tmp_metric)
-                tmp_decision_assignment_list.append(tmp_assignment)
-            tmp_best_decision_id = np.argmax(
-                [get_energy(i, args.alpha) for i in tmp_decision_metric_list]
-            )
-            tmp_assignment = tmp_decision_assignment_list[tmp_best_decision_id]
-            tmp_metric = tmp_decision_metric_list[tmp_best_decision_id]
-
-            if get_energy(tmp_metric, args.alpha) >= get_energy(best_metric, args.alpha):
-                best_decision_id = decision_id
-                best_metric = tmp_metric
-                best_assignment = tmp_assignment
-                break
-        if best_decision_id is None:
-            break
-        elif best_metric["inconsistent_num"] == 0:
-            assignment = best_assignment
-            break
-        else:
-            assignment = best_assignment
-
-    for k in assignment:
-        demonstrations[k] = assignment[k]
-
-    return demonstrations, best_metric
 
 
 def get_pipeline(
@@ -160,7 +96,6 @@ def get_pipeline(
 
     pipeline_config = PipelineConfig(
         pipeline_name,
-        anthropic_num_threads=40,
         openai_fraction_rate_limit=0.99,
         num_problems=num_problems,
         use_cache=use_cache,
@@ -237,16 +172,11 @@ def get_pipeline(
         use_cache=use_cache,
     )
 
-    pick_claims = pipeline.add_transformation_step(
-        "pick_two_inconsistent_claims",
-        pick_two_inconsistent_claims,
-        dependencies=[initial_assign],
-    )
 
     eval_preds = pipeline.add_eval_step(
         "evaluate",
         calculate_accuracy,
-        dependencies=[get_train_preds, pick_claims],
+        dependencies=[get_train_preds],
     )
     return pipeline
 
@@ -257,7 +187,7 @@ async def predict_assignment(model, example, demonstrations):
         for k, v in demonstrations.items()
         if k != example["uid"] and v["label"] is not None
     ]
-    anthropic_requests = [
+    model_requests = [
         model_api(
             model,
             get_judge_prompt_fewshot(
@@ -270,11 +200,25 @@ async def predict_assignment(model, example, demonstrations):
             parse_fn=extract_claim_logprobs,
         )
     ]
-    responses = await asyncio.gather(*anthropic_requests)
+    responses = await asyncio.gather(*model_requests)
     score = responses[0][0]["score"]
     new_label = score > 0
     return int(new_label)
 
+async def predict_assignment_zero_shot_chat(model, example):
+    model_requests = [
+        model_api(
+            model,
+            get_judge_prompt_zeroshot(example, pipeline=False),
+            logprobs=20,
+            max_tokens=1,
+            parse_fn=extract_claim_logprobs,
+        )
+    ]
+    responses = await asyncio.gather(*model_requests)
+    score = responses[0][0]["score"]
+    new_label = score > 0
+    return int(new_label)
 
 def get_temperature(
     iteration, initial_temp, final_temp, decay_rate, schedule="exp"
@@ -299,18 +243,16 @@ def get_temperature(
 
 
 def get_energy(metric, alpha):
-    return alpha * metric["train_prob"] - metric["inconsistent_num"]
+    return metric["train_prob"]
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--alpha", type=float, default=30)
     parser.add_argument("--seed", type=int, default=27565976)
-    parser.add_argument("--testbed", type=str, default="gsm8k")
-    parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-70B")
+    parser.add_argument("--testbed", type=str, default="truthfulQA")
+    parser.add_argument("--model", type=str, default="Llama-3.1-405B-BASE")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_seed", type=int, default=8)
     parser.add_argument("--K", type=int, default=3000)
-    parser.add_argument("--consistency_fix_K", type=int, default=10)
     parser.add_argument("--decay", type=float, default=0.99)
     parser.add_argument("--initial_T", type=float, default=10)
     parser.add_argument("--final_T", type=float, default=0.01)
@@ -318,64 +260,21 @@ def get_args():
     args = parser.parse_args()
     return args
 
-def load_data(args):
-    if args.testbed == "alpaca":
-        with open(get_root_directory() / "data/train_alpaca.json") as f:
-            train = json.load(f)
-        template = """Human: {question}
-Response 1: {choice}
-Response 2: {choice_2}
-Claim: Response 1 is more helpful and harmless than Response 2.
-I think this claim is """
-        for i in train:
-            i['source'] = 'alpaca'
-            i['consistency_key'] = 'A>B' if i['label'] else 'B>A'
-            i['prompt'] = template.format(question=i['question'], choice=i['choice'].replace("\n", ""), choice_2=i['choice_2'].replace("\n", ""))
-        
-        args.GROUP_SIZE = 2
-        
-    elif args.testbed == 'gsm8k':
-        with open(get_root_directory() / "data/train_gsm8k.json") as f:
-            train = json.load(f)
-        template = """Question: {question}
-Claim: {answer}
-I think this claim is """
+def load_train_data(args):
 
-        for i in train:
-            i['source'] = 'gsm8k'
-            i['consistency_key'] = i['answer']
-            i['prompt'] = template.format(question=i['question'], answer=i['choice'])
+    with open(get_root_directory() / "praxis_labs_ue1/data/truthfulqa_train.json") as f:
+        train = json.load(f)
+    
+    template = """Question: {question}
+        Claim: {answer}
+        I think this claim is """
 
-        args.GROUP_SIZE = 4
-        
-    elif args.testbed == 'truthfulQA':
-        with open(get_root_directory() / "data/train_truthfulqa.json") as f:
-            train = json.load(f)
-        template = """Question: {question}
-Claim: {answer}
-I think this claim is """
+    for i in train:
+        i['source'] = 'truthfulQA'
+        i['consistency_key'] = 'A' if i['label'] else 'B'
+        i['prompt'] = template.format(question=i['question'], answer=i['choice'])
+    args.GROUP_SIZE = 4
 
-        for i in train:
-            i['source'] = 'truthfulQA'
-            i['consistency_key'] = 'A' if i['label'] else 'B'
-            i['prompt'] = template.format(question=i['question'], answer=i['choice'])
-        args.GROUP_SIZE = 4
-        
-    elif args.testbed == 'truthfulQA-preference':
-        with open(get_root_directory() / "data/train_truthfulqa_preference.json") as f:
-            train = json.load(f)
-        template = """Question: {question}
-Answer 1: {choice}
-Answer 2: {choice_2}
-Claim: Answer 1 is more truthful than Answer 2.
-I think this claim is """
-
-        for i in train:
-            i['source'] = 'truthfulQA-preference'
-            i['consistency_key'] = 'A>B' if i['label'] else 'B>A'
-            i['prompt'] = template.format(question=i['question'], choice=i['choice'], choice_2=i['choice_2'])
-        args.GROUP_SIZE = 2
-        
     train_map = {}
     for i in train:
         if i['consistency_id'] not in train_map:
@@ -396,6 +295,33 @@ I think this claim is """
     ]
 
     return train, fewshot_ids
+
+def load_test_data(args):
+    with open(get_root_directory() / "praxis_labs_ue1/data/truthfulqa_test.json") as f:
+        test = json.load(f)
+    
+    template = """Question: {question}
+        Claim: {answer}
+        I think this claim is """
+
+    for i in test:
+        i['source'] = 'truthfulQA'
+        i['consistency_key'] = 'A' if i['label'] else 'B'
+        i['prompt'] = template.format(question=i['question'], answer=i['choice'])
+    args.GROUP_SIZE = 4
+
+    test_map = {}
+    for i in test:
+        if i['consistency_id'] not in test_map:
+            test_map[i['consistency_id']] = []
+        test_map[i['consistency_id']].append(i)
+    
+    out = []
+    for key in test_map:
+        out += test_map[key]
+    test = out
+    
+    return test
 
 def initialize(train, fewshot_ids, args):
     demonstrations = {}
@@ -424,8 +350,8 @@ def initialize(train, fewshot_ids, args):
     return demonstrations, unlabeled_ids, whole_ids, seed_ids
 
 
-def main(args):
-    train, fewshot_ids = load_data(args)
+def icm_main(args):
+    train, fewshot_ids = load_train_data(args)
 
     demonstrations, unlabeled_ids, whole_ids, seed_ids = initialize(train, fewshot_ids, args)
     
@@ -448,7 +374,7 @@ def main(args):
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
-        initial_demos = deepcopy(demonstrations)
+
         if iter == 0:
             pipeline = get_pipeline(
                 args.model,
@@ -460,10 +386,6 @@ def main(args):
             results = asyncio.run(pipeline.run())
             cur_metric = results["evaluate"]
             
-            demonstrations, cur_metric = fix_inconsistency(
-                demonstrations, cur_metric, name, args.alpha, iter=iter, K=args.consistency_fix_K
-            )
-            
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
@@ -471,13 +393,6 @@ def main(args):
         while True: # weighted sampling
             candidates_ids = whole_ids
             weights = [1 for _ in range(len(candidates_ids))]
-            for i in candidates_ids:
-                if i in cur_pool:
-                    same_consistency_group_ids = [j for j in candidates_ids if demonstrations[j]["consistency_id"] == demonstrations[i]["consistency_id"]]
-                    for j in same_consistency_group_ids:
-                        if j not in cur_pool:
-                            weights[j] = 100
-
             example_id = random.choices(candidates_ids, k=1, weights=weights)[0]
             break
 
@@ -500,14 +415,6 @@ def main(args):
                 "train_label_distribution": {"0": 0, "1": 0},
             }
 
-            tmp_demonstrations, _ = fix_inconsistency(
-                tmp_demonstrations,
-                dummy_metric,
-                name + "newlabelexplore",
-                args.alpha,
-                iter=iter,
-                K=10,
-            )
             
             tmp_pool = {
                 k: v
@@ -527,13 +434,9 @@ def main(args):
                 flip_cnt, args.initial_T, args.final_T, args.decay, schedule=args.scheduler
             )
             print(f"iter = {iter}, pool size = {len(cur_pool)}, cur acc = {cur_metric['train_accuracy']}, new acc = {metric['train_accuracy']}, cur score = {get_energy(cur_metric, args.alpha)}, new score = {get_energy(metric, args.alpha)}, cur inconsistent num = {cur_metric['inconsistent_num']}, new inconsistent num = {metric['inconsistent_num']}")
-            print('cur label distribution = ', Counter([i['label'] for i in demonstrations.values() if i['label'] is not None]))
-            print('new label distribution = ', Counter([i['label'] for i in tmp_demonstrations.values() if i['label'] is not None]))
 
             accept_prob = math.exp((get_energy(metric, args.alpha) - get_energy(cur_metric, args.alpha)) / T)
-            print("accept prob = ", accept_prob)
             if random.random() < accept_prob:
-                print("accept")
                 demonstrations = tmp_demonstrations
                 flip_cnt += 1
                 cur_metric = metric
@@ -545,16 +448,171 @@ def main(args):
                         "score": get_energy(cur_metric, args.alpha),
                     }) + "\n")
             else:
-                print("reject")
+                continue
         
         print("=" * 100)
         iter += 1
+    
+    max_uid = max(demonstrations.keys())
+    
+    #read in test data
+    test = load_test_data(args)
+    correct_cnt = 0
+    for idx, i in enumerate(test):
+        i['uid'] = max_uid + 1 + idx
+        new_label = asyncio.run(
+            predict_assignment(
+                args.model,
+                i,
+                demonstrations,
+            )
+        )
+        i['new_label'] = new_label
+        if i['label'] == i['new_label']:
+            correct_cnt += 1
+    return correct_cnt / len(test)
 
+def golden_supervision_main(args):
+    train, fewshot_ids = load_train_data(args)
+
+    demonstrations = {}
+
+    for id, i in enumerate(fewshot_ids):
+        item = train[i]
+        item["uid"] = id    
+        demonstrations[id] = item
+
+    max_uid = max(demonstrations.keys())
+    
+    #read in test data
+    test = load_test_data(args)
+    correct_cnt = 0
+    for idx, i in enumerate(test):
+        i['uid'] = max_uid + 1 + idx
+        new_label = asyncio.run(
+            predict_assignment(
+                args.model,
+                i,
+                demonstrations,
+            )
+        )
+        i['new_label'] = new_label
+        if i['label'] == i['new_label']:
+            correct_cnt += 1
+    return correct_cnt / len(test)
+
+def zero_shot_chat_main(args):
+    #read in test data
+    test = load_test_data(args)
+    correct_cnt = 0
+    for idx, i in enumerate(test):
+        new_label = asyncio.run(
+            predict_assignment_zero_shot_chat(
+                "Llama-3.1-405B",
+                i
+            )
+        )
+        i['new_label'] = new_label
+        if i['label'] == i['new_label']:
+            correct_cnt += 1
+    return correct_cnt / len(test)
+
+def zero_shot_pretrained_main(args):
+    #read in test data
+    test = load_test_data(args)
+    correct_cnt = 0
+    for idx, i in enumerate(test):
+        new_label = asyncio.run(
+            predict_assignment_zero_shot_chat(
+                args.model,
+                i
+            )
+        )
+        i['new_label'] = new_label
+        if i['label'] == i['new_label']:
+            correct_cnt += 1
+    return correct_cnt / len(test)
+
+def plot_test_accuracies(icm_test_accuracy, golden_supervision_test_accuracy, zero_shot_chat_test_accuracy, zero_shot_pretrained_test_accuracy):
+    accuracies = [
+        icm_test_accuracy * 100,
+        golden_supervision_test_accuracy * 100,
+        zero_shot_chat_test_accuracy * 100,
+        zero_shot_pretrained_test_accuracy * 100,
+    ]
+    labels = [
+        "Unsupervised (Mine)",
+        "Golden Supervision",
+        "Zero-shot (Chat)",
+        "Zero-shot",
+    ]
+
+    bar_colors = [
+        "#58b6c0",             # light blue / teal for unsupervised
+        "#FFD700",             # golden for golden supervision
+        "#B366CC",             # purple for zero-shot (chat)
+        "#9658ca",             # purple for zero-shot (pretrained)
+    ]
+
+    x = np.arange(len(labels))
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    # Plot bars
+    bars = ax.bar(
+        x, 
+        accuracies, 
+        color=[bar_colors[0], bar_colors[1], bar_colors[3], bar_colors[2]],  # regular bars
+        tick_label=labels,
+        edgecolor="k",
+        zorder=2
+    )
+
+    # Add hatching to "Zero-shot (Chat)" bar (index 2)
+    bars[2].set_hatch('...')  # dotted hatch
+    bars[2].set_color(bar_colors[2])  # Make sure it's the purple with dots
+
+    # Set y-axis
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_ylim(0, 100)
+    ax.set_title("Test Accuracy Comparison")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=15, ha="right")
+
+    # Add value labels atop bars
+    for bar in bars:
+        height = bar.get_height()
+        ax.annotate(f'{height:.1f}%',
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 5),  # 5 points vertical offset
+                    textcoords="offset points",
+                    ha='center', va='bottom', fontsize=10)
+
+    plt.tight_layout()
+    plt.grid(axis='y', zorder=1, alpha=0.3)
+    plt.savefig("figure_1.png", dpi=500)
+    plt.close()
 
 if __name__ == "__main__":
     setup_environment(logger_level="error")
-    model_api = ModelAPI(anthropic_num_threads=20, openai_fraction_rate_limit=0.99)
+    model_api = ModelAPI(openai_fraction_rate_limit=0.99)
     args = get_args()  
     print("task: ", args.testbed)
     random.seed(args.seed)
-    main(args)
+
+    icm_test_accuracy = icm_main(args)
+    golden_supervision_test_accuracy = golden_supervision_main(args)
+    zero_shot_chat_test_accuracy = zero_shot_chat_main(args)
+    zero_shot_pretrained_test_accuracy = zero_shot_pretrained_main(args)
+
+    print(f"ICM test accuracy = {icm_test_accuracy}")
+    print(f"Golden supervision test accuracy = {golden_supervision_test_accuracy}")
+    print(f"Zero shot chat test accuracy = {zero_shot_chat_test_accuracy}")
+    print(f"Zero shot pretrained test accuracy = {zero_shot_pretrained_test_accuracy}")
+
+    # Call the plotting function
+    plot_test_accuracies(
+        icm_test_accuracy,
+        golden_supervision_test_accuracy,
+        zero_shot_chat_test_accuracy,
+        zero_shot_pretrained_test_accuracy
+    )

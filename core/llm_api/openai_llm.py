@@ -383,7 +383,7 @@ _GPT_4_MODELS = [
     "meta-llama/llama-2-70b-chat",
     "meta-llama/llama-3.1-8b-instruct",
     "meta-llama/llama-3.1-70b-instruct",
-    "meta-llama/llama-3.1-405b-instruct",
+    "Llama-3.1-405B",
     "qwen/qwen-2.5-7b-instruct",
     "openai/gpt-4o",
     "openchat/openchat-7b",
@@ -467,14 +467,14 @@ class OpenAIChatModel(OpenAIModel):
     async def _make_api_call(
         self, prompt: OAIChatPrompt, model_id, start_time, **params
     ) -> list[LLMResponse]:
-        LOGGER.debug(f"Making {model_id} call with {self.organization}")
+        LOGGER.debug(f"Making {model_id} call")
 
         if params.get("logprobs", None):
             params["top_logprobs"] = params["logprobs"]
             params["logprobs"] = True
 
         api_start = time.time()
-        api_response: OpenAICompletion = await openai.ChatCompletion.acreate(messages=prompt, model=model_id, organization=self.organization, **params)  # type: ignore
+        api_response: OpenAICompletion = await openai.ChatCompletion.acreate(messages=prompt, model=model_id, **params)  # type: ignore
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         context_token_cost, completion_token_cost = price_per_token(model_id)
@@ -515,6 +515,7 @@ class OpenAIChatModel(OpenAIModel):
 BASE_MODELS = {
     "meta-llama/Llama-3.1-8B",
     "meta-llama/Llama-3.1-70B",
+    "Llama-3.1-405B-BASE"
 }
 
 
@@ -560,9 +561,9 @@ class OpenAIBaseModel(OpenAIModel):
     async def _make_api_call(
         self, prompt: OAIBasePrompt, model_id, start_time, **params
     ) -> list[LLMResponse]:
-        LOGGER.debug(f"Making {model_id} call with {self.organization}")
+        LOGGER.debug(f"Making {model_id} call")
         api_start = time.time()
-        api_response: OpenAICompletion = await openai.Completion.acreate(prompt=prompt, model=model_id, organization=self.organization, **params)  # type: ignore
+        api_response: OpenAICompletion = await openai.Completion.acreate(prompt=prompt, model=model_id, **params)  # type: ignore
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         if "gpt" not in model_id:

@@ -26,17 +26,15 @@ LOGGER = logging.getLogger(__name__)
 
 @attrs.define()
 class ModelAPI:
-    anthropic_num_threads: int = 2  # current redwood limit is 5
+
     openai_fraction_rate_limit: float = attrs.field(
         default=0.99, validator=attrs.validators.lt(1)
     )
-    organization: str = "NYU_ORG"
+    organization: None = None
     print_prompt_and_response: bool = False
 
     _openai_base: OpenAIBaseModel = attrs.field(init=False)
-    _openai_base_arg: OpenAIBaseModel = attrs.field(init=False)
     _openai_chat: OpenAIChatModel = attrs.field(init=False)
-    _anthropic_chat: AnthropicChatModel = attrs.field(init=False)
 
     running_cost: float = attrs.field(init=False, default=0)
     model_timings: dict[str, list[float]] = attrs.field(init=False, default={})
@@ -51,20 +49,12 @@ class ModelAPI:
             organization=secrets[self.organization],
             print_prompt_and_response=self.print_prompt_and_response,
         )
-        self._openai_base_arg = OpenAIBaseModel(
-            frac_rate_limit=self.openai_fraction_rate_limit,
-            organization=secrets["ARG_ORG"],
-            print_prompt_and_response=self.print_prompt_and_response,
-        )
         self._openai_chat = OpenAIChatModel(
             frac_rate_limit=self.openai_fraction_rate_limit,
             organization=secrets[self.organization],
             print_prompt_and_response=self.print_prompt_and_response,
         )
-        self._anthropic_chat = AnthropicChatModel(
-            num_threads=self.anthropic_num_threads,
-            print_prompt_and_response=self.print_prompt_and_response,
-        )
+
         Path("./prompt_history").mkdir(exist_ok=True)
 
     @staticmethod

@@ -43,3 +43,12 @@ def get_judge_prompt_fewshot(example, demonstrations=None, pipeline=True):
         return Prompt(prompt)
     else:
         return prompt
+
+def get_judge_prompt_zeroshot(example, pipeline=True):
+    prompt = ""
+    prompt += example['prompt']
+
+    if pipeline:
+        return Prompt(prompt)
+    else:
+        return prompt
