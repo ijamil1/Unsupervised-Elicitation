@@ -249,9 +249,10 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=27565976)
     parser.add_argument("--testbed", type=str, default="truthfulQA")
-    parser.add_argument("--model", type=str, default="Llama-3.1-405B-BASE")
+    parser.add_argument("--model", type=str, default="meta-llama/Meta-Llama-3.1-405B")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_seed", type=int, default=8)
+    parser.add_argument("--alpha", type=int, default=1)
     parser.add_argument("--K", type=int, default=3000)
     parser.add_argument("--decay", type=float, default=0.99)
     parser.add_argument("--initial_T", type=float, default=10)
@@ -384,8 +385,7 @@ def icm_main(args):
                 assignment=cur_pool,
             )
             results = asyncio.run(pipeline.run())
-            cur_metric = results["evaluate"]
-            
+            cur_metric = results["evaluate"]   
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }

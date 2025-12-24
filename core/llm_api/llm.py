@@ -104,7 +104,7 @@ class ModelAPI:
         prompt: Union[list[dict[str, str]], str],
         print_prompt_and_response: bool = False,
         n: int = 1,
-        max_attempts_per_api_call: int = 50,
+        max_attempts_per_api_call: int = 2,
         num_candidates_per_completion: int = 1,
         parse_fn=None,
         use_cache: bool = True,
@@ -134,7 +134,6 @@ class ModelAPI:
             save_path: cache path
             use_cache: whether to load from the cache or overwrite it
         """
-
         assert (
             "max_tokens_to_sample" not in kwargs
         ), "max_tokens_to_sample should be passed in as max_tokens."

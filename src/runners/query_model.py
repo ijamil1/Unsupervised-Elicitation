@@ -262,7 +262,7 @@ async def query_model(model_api, file_sem, query_config):
     ]
 
     model_responses = await asyncio.gather(*model_requests)
-
+ 
     # pass through data that wasn't modified by the request
     model_responses_map = {
         data_id: response for data_id, response in zip(prompts.keys(), model_responses)

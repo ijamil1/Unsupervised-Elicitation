@@ -29,7 +29,6 @@ OAIChatPrompt = list[dict[str, str]]
 OAIBasePrompt = Union[str, list[str]]
 LOGGER = logging.getLogger(__name__)
 
-
 def count_tokens(text: str) -> int:
     return len(tiktoken.get_encoding("cl100k_base").encode(text))
 
@@ -229,7 +228,6 @@ class OpenAIModel(ModelAPIProtocol):
 
         async def attempt_api_call():
             api_base_list = [os.environ['LLAMA_API_BASE']]
-                
             kwargs["api_base"] = random.choice(api_base_list)
             for model_id in cycle(model_ids):
                 return await asyncio.wait_for(
@@ -383,7 +381,7 @@ _GPT_4_MODELS = [
     "meta-llama/llama-2-70b-chat",
     "meta-llama/llama-3.1-8b-instruct",
     "meta-llama/llama-3.1-70b-instruct",
-    "Llama-3.1-405B",
+    "meta-llama/Meta-Llama-3.1-405B-Instruct",
     "qwen/qwen-2.5-7b-instruct",
     "openai/gpt-4o",
     "openchat/openchat-7b",
@@ -515,7 +513,7 @@ class OpenAIChatModel(OpenAIModel):
 BASE_MODELS = {
     "meta-llama/Llama-3.1-8B",
     "meta-llama/Llama-3.1-70B",
-    "Llama-3.1-405B-BASE"
+    "meta-llama/Meta-Llama-3.1-405B"
 }
 
 
@@ -563,7 +561,7 @@ class OpenAIBaseModel(OpenAIModel):
     ) -> list[LLMResponse]:
         LOGGER.debug(f"Making {model_id} call")
         api_start = time.time()
-        api_response: OpenAICompletion = await openai.Completion.acreate(prompt=prompt, model=model_id, **params)  # type: ignore
+        api_response: OpenAICompletion = await openai.ChatCompletion.acreate(messages=prompt, model=model_id, **params)  # type: ignore
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         if "gpt" not in model_id:

@@ -295,6 +295,7 @@ class Pipeline:
         steps = self.topological_sort_tasks(self.steps)
         self.set_use_cache(steps)
         for task in steps:
+            print(f"Starting step {task.index}: {task.name} - Using cache: {task.use_cache}")
             logger.info(
                 f"Starting step {task.index}: {task.name} - Using cache: {task.use_cache}"
             )
