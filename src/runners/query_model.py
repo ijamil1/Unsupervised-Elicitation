@@ -234,7 +234,6 @@ def tokenize_logit_bias(logit_bias, model):
         tokenized_bias[tokenized[0]] = v
     return tokenized_bias
 
-
 async def query_model(model_api, file_sem, query_config):
     data = query_config.get_data()
     prompts = _get_prompts(data, query_config.prompt_fn)

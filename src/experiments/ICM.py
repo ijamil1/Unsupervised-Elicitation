@@ -10,15 +10,10 @@ import numpy as np
 from datasets import load_dataset
 import argparse
 import matplotlib.pyplot as plt
-
+import time
 from core.llm_api.llm import ModelAPI
 from core.utils import setup_environment
-from src.experiments.ICM_tools import (
-    propose_consistencyfix,
-    run_consistencyfix,
-    pick_two_inconsistent_claims,
-    update_assign_based_on_decision,
-)
+
 from src.model_querying.prompt_creation import (
     get_decision_prompt,
     get_judge_prompt_fewshot,
@@ -255,7 +250,7 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_seed", type=int, default=8)
     parser.add_argument("--alpha", type=int, default=1)
-    parser.add_argument("--K", type=int, default=3000)
+    parser.add_argument("--K", type=int, default=1500)
     parser.add_argument("--decay", type=float, default=0.99)
     parser.add_argument("--initial_T", type=float, default=10)
     parser.add_argument("--final_T", type=float, default=0.01)
@@ -353,14 +348,13 @@ def initialize(train, fewshot_ids, args):
     return demonstrations, unlabeled_ids, whole_ids, seed_ids
 
 
-def icm_main(args):
+async def icm_main(args):
     train, fewshot_ids = load_train_data(args)
 
     demonstrations, unlabeled_ids, whole_ids, seed_ids = initialize(train, fewshot_ids, args)
     
     cur_metric = {
         "train_prob": -1e6,
-        "inconsistent_num": 100000,
         "train_accuracy": 1.0,
         "train_predict_distribution": {"0": 0, "1": 0},
         "train_label_distribution": {"0": 0, "1": 0},
@@ -386,7 +380,7 @@ def icm_main(args):
                 iter=iter,
                 assignment=cur_pool,
             )
-            results = asyncio.run(pipeline.run())
+            results = await pipeline.run()
             cur_metric = results["evaluate"]   
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
@@ -394,23 +388,24 @@ def icm_main(args):
         while True: # weighted sampling
             candidates_ids = whole_ids
             weights = [1 for _ in range(len(candidates_ids))]
+            for idx, (demo_id, demo) in enumerate(demonstrations.items()):
+                if demo["label"] is None:
+                    weights[idx] = 100
             example_id = random.choices(candidates_ids, k=1, weights=weights)[0]
             break
 
-        new_label = asyncio.run(
-            predict_assignment(
+        new_label = await predict_assignment(
                 args.model,#base pre-trained LLM
                 demonstrations[example_id],
                 cur_pool,
             )
-        )
+        
 
         if demonstrations[example_id]["label"] != new_label:
             tmp_demonstrations = deepcopy(demonstrations)
             tmp_demonstrations[example_id]["label"] = new_label
             dummy_metric = {
                 "train_prob": -1e6,
-                "inconsistent_num": 100000,
                 "train_accuracy": 1.0,
                 "train_predict_distribution": {"0": 0, "1": 0},
                 "train_label_distribution": {"0": 0, "1": 0},
@@ -429,12 +424,14 @@ def icm_main(args):
                 iter=iter,
                 assignment=tmp_pool,
             )
-            results = asyncio.run(pipeline.run())
+            results = await pipeline.run()
             metric = results["evaluate"]
             T = get_temperature(
                 flip_cnt, args.initial_T, args.final_T, args.decay, schedule=args.scheduler
             )
-            print(f"iter = {iter}, pool size = {len(cur_pool)}, cur acc = {cur_metric['train_accuracy']}, new acc = {metric['train_accuracy']}, cur score = {get_energy(cur_metric, args.alpha)}, new score = {get_energy(metric, args.alpha)}, cur inconsistent num = {cur_metric['inconsistent_num']}, new inconsistent num = {metric['inconsistent_num']}")
+
+            if iter % 10 == 0:
+                print(f"iter = {iter}, pool size = {len(cur_pool)}, cur acc = {cur_metric['train_accuracy']}, new acc = {metric['train_accuracy']}, cur score = {get_energy(cur_metric, args.alpha)}, new score = {get_energy(metric, args.alpha)}")
 
             accept_prob = math.exp((get_energy(metric, args.alpha) - get_energy(cur_metric, args.alpha)) / T)
             if random.random() < accept_prob:
@@ -461,19 +458,18 @@ def icm_main(args):
     correct_cnt = 0
     for idx, i in enumerate(test):
         i['uid'] = max_uid + 1 + idx
-        new_label = asyncio.run(
-            predict_assignment(
+        new_label = await predict_assignment(
                 args.model,
                 i,
                 demonstrations,
             )
-        )
+        
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
     return correct_cnt / len(test)
 
-def golden_supervision_main(args):
+async def golden_supervision_main(args):
     train, fewshot_ids = load_train_data(args)
 
     demonstrations = {}
@@ -490,45 +486,42 @@ def golden_supervision_main(args):
     correct_cnt = 0
     for idx, i in enumerate(test):
         i['uid'] = max_uid + 1 + idx
-        new_label = asyncio.run(
-            predict_assignment(
+        new_label = await predict_assignment(
                 args.model,
                 i,
                 demonstrations,
             )
-        )
+        
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
     return correct_cnt / len(test)
 
-def zero_shot_chat_main(args):
+async def zero_shot_chat_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
     for idx, i in enumerate(test):
-        new_label = asyncio.run(
-            predict_assignment_zero_shot(
+        new_label = await predict_assignment_zero_shot(
                 "meta-llama/Meta-Llama-3.1-405B-Instruct",
                 i
             )
-        )
+        
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
     return correct_cnt / len(test)
 
-def zero_shot_pretrained_main(args):
+async def zero_shot_pretrained_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
     for idx, i in enumerate(test):
-        new_label = asyncio.run(
-            predict_assignment_zero_shot(
+        new_label = await predict_assignment_zero_shot(
                 args.model,
                 i
             )
-        )
+        
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
@@ -593,17 +586,16 @@ def plot_test_accuracies(icm_test_accuracy, golden_supervision_test_accuracy, ze
     plt.savefig("figure_1.png", dpi=500)
     plt.close()
 
-if __name__ == "__main__":
+async def async_main():
     setup_environment(logger_level="error")
-    model_api = ModelAPI(openai_fraction_rate_limit=0.99)
     args = get_args()  
     print("task: ", args.testbed)
     random.seed(args.seed)
 
-    icm_test_accuracy = icm_main(args)
-    golden_supervision_test_accuracy = golden_supervision_main(args)
-    zero_shot_chat_test_accuracy = zero_shot_chat_main(args)
-    zero_shot_pretrained_test_accuracy = zero_shot_pretrained_main(args)
+    icm_test_accuracy = await icm_main(args)
+    golden_supervision_test_accuracy = await golden_supervision_main(args)
+    zero_shot_chat_test_accuracy = await zero_shot_chat_main(args)
+    zero_shot_pretrained_test_accuracy = await zero_shot_pretrained_main(args)
 
     print(f"ICM test accuracy = {icm_test_accuracy}")
     print(f"Golden supervision test accuracy = {golden_supervision_test_accuracy}")
@@ -617,3 +609,7 @@ if __name__ == "__main__":
         zero_shot_chat_test_accuracy,
         zero_shot_pretrained_test_accuracy
     )
+
+if __name__ == "__main__":
+    model_api = ModelAPI(openai_fraction_rate_limit=0.99)
+    asyncio.run(async_main())

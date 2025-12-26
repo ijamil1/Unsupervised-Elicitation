@@ -104,7 +104,7 @@ class ModelAPI:
         prompt: Union[list[dict[str, str]], str],
         print_prompt_and_response: bool = False,
         n: int = 1,
-        max_attempts_per_api_call: int = 2,
+        max_attempts_per_api_call: int = 5,
         num_candidates_per_completion: int = 1,
         parse_fn=None,
         use_cache: bool = True,
