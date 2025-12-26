@@ -121,6 +121,7 @@ class Pipeline:
         use_cache=None,
         temperature=None,
         logprobs=None,
+        top_logprobs=None,
         team=None,
         max_tokens=4096,
         bon=1,
@@ -138,6 +139,7 @@ class Pipeline:
             .with_max_tokens(max_tokens)
             .with_temperature(temperature)
             .with_logprobs(logprobs)
+            .with_top_logprobs(top_logprobs)
             .with_bon(bon)
         )
 
@@ -295,7 +297,6 @@ class Pipeline:
         steps = self.topological_sort_tasks(self.steps)
         self.set_use_cache(steps)
         for task in steps:
-            print(f"Starting step {task.index}: {task.name} - Using cache: {task.use_cache}")
             logger.info(
                 f"Starting step {task.index}: {task.name} - Using cache: {task.use_cache}"
             )

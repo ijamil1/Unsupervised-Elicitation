@@ -156,10 +156,6 @@ class ModelAPI:
             raise ValueError(f"Invalid model id: {model_id}")
 
         model_classes = [model_id_to_class(model_id) for model_id in model_ids]
-        # assert model_classes == self._openai_base
-        # if model_classes == self._openai_base:
-        #     assert "gpt" not in model_ids[0]
-        #     kwargs['api_base'] = "https://5jfmglryfots6s-8000.proxy.runpod.net/v1"
 
         if len(set(str(type(x)) for x in model_classes)) != 1:
             raise ValueError("All model ids must be of the same type.")

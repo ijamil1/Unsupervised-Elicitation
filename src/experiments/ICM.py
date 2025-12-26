@@ -37,7 +37,7 @@ from src.tools.dataloaders import (
 from src.tools.path_utils import get_default_results_directory, get_root_directory
 
 
-def calculate_accuracy(train_data, inconsistent_pairs):
+def calculate_accuracy(train_data):
     train_probs = []
     for i in train_data.values():
         if i["label"] is None:
@@ -167,7 +167,8 @@ def get_pipeline(
         get_judge_prompt_fewshot,
         extract_claim_logprobs,
         dependencies=[merged_train_data],
-        logprobs=20,
+        logprobs=True,
+        top_logprobs = 20,
         max_tokens=1,
         use_cache=use_cache,
     )
@@ -195,7 +196,8 @@ async def predict_assignment(model, example, demonstrations):
                 demos,
                 pipeline=False,
             ),
-            logprobs=20,
+            logprobs=True,
+            top_logprobs=20,
             max_tokens=1,
             parse_fn=extract_claim_logprobs,
         )
@@ -205,12 +207,13 @@ async def predict_assignment(model, example, demonstrations):
     new_label = score > 0
     return int(new_label)
 
-async def predict_assignment_zero_shot_chat(model, example):
+async def predict_assignment_zero_shot(model, example):
     model_requests = [
         model_api(
             model,
             get_judge_prompt_zeroshot(example, pipeline=False),
-            logprobs=20,
+            logprobs=True,
+            top_logprobs=20,
             max_tokens=1,
             parse_fn=extract_claim_logprobs,
         )
@@ -221,8 +224,7 @@ async def predict_assignment_zero_shot_chat(model, example):
     return int(new_label)
 
 def get_temperature(
-    iteration, initial_temp, final_temp, decay_rate, schedule="exp"
-):
+    iteration, initial_temp, final_temp, decay_rate, schedule="exp"):
     """
     Calculate the temperature for simulated annealing.
 
@@ -389,7 +391,6 @@ def icm_main(args):
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
-       
         while True: # weighted sampling
             candidates_ids = whole_ids
             weights = [1 for _ in range(len(candidates_ids))]
@@ -398,7 +399,7 @@ def icm_main(args):
 
         new_label = asyncio.run(
             predict_assignment(
-                args.model,
+                args.model,#base pre-trained LLM
                 demonstrations[example_id],
                 cur_pool,
             )
@@ -507,8 +508,8 @@ def zero_shot_chat_main(args):
     correct_cnt = 0
     for idx, i in enumerate(test):
         new_label = asyncio.run(
-            predict_assignment_zero_shot_chat(
-                "Llama-3.1-405B",
+            predict_assignment_zero_shot(
+                "meta-llama/Meta-Llama-3.1-405B-Instruct",
                 i
             )
         )
@@ -523,7 +524,7 @@ def zero_shot_pretrained_main(args):
     correct_cnt = 0
     for idx, i in enumerate(test):
         new_label = asyncio.run(
-            predict_assignment_zero_shot_chat(
+            predict_assignment_zero_shot(
                 args.model,
                 i
             )

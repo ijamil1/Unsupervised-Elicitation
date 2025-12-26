@@ -27,6 +27,7 @@ class QueryConfig:
         results_dir=None,
         temperature=None,
         logprobs=None,
+        top_logprobs=None,
         bon=1,
     ):
         assert isinstance(model_to_test, str)
@@ -43,6 +44,7 @@ class QueryConfig:
         self.results_dir = results_dir
         self.temperature = temperature if temperature is not None else 0.0
         self.logprobs = logprobs
+        self.top_logprobs = top_logprobs
         self.bon = bon
 
     def get_data(self):
@@ -85,6 +87,7 @@ class QueryConfigBuilder:
         self.results_dir = None
         self.temperature = 0.0
         self.logprobs = None
+        self.top_logprobs = None
         self.bon = 1
 
     def with_experiment_name(self, experiment_name):
@@ -146,6 +149,10 @@ class QueryConfigBuilder:
             assert "claude" not in self.model_to_test
         return self
 
+    def with_top_logprobs(self, top_logprobs):
+        self.top_logprobs = top_logprobs
+        return self
+
     def build(self):
         assert self.experiment_name is not None, "Experiment name must be set"
         assert self.model_to_test is not None, "Model to test must be set"
@@ -170,6 +177,7 @@ class QueryConfigBuilder:
             self.results_dir,
             self.temperature,
             self.logprobs,
+            self.top_logprobs,
             self.bon,
         )
 
@@ -233,7 +241,6 @@ async def query_model(model_api, file_sem, query_config):
     save_dir = get_save_dir(query_config)
 
     move_data_into_metadata(data)
-
     model_requests = [
         model_api(
             query_config.model_to_test,
@@ -243,6 +250,7 @@ async def query_model(model_api, file_sem, query_config):
             n=query_config.bon,
             top_p=1.0,
             logprobs=query_config.logprobs,
+            top_logprobs=query_config.top_logprobs,
             use_cache=query_config.use_cache,
             metadata=data[data_id]["metadata"],
             parse_fn=query_config.parse_fn,

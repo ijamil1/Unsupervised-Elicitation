@@ -247,6 +247,7 @@ class OpenAIModel(ModelAPIProtocol):
                 responses = await attempt_api_call()
             except Exception as e:
                 error_info = f"Exception Type: {type(e).__name__}, Error Details: {str(e)}, Traceback: {format_exc()}"
+                print('error_info', error_info)
                 LOGGER.warn(
                     f"Encountered API error: {error_info}.\nRetrying now. (Attempt {i})"
                 )
@@ -472,7 +473,8 @@ class OpenAIChatModel(OpenAIModel):
             params["logprobs"] = True
 
         api_start = time.time()
-        api_response: OpenAICompletion = await openai.ChatCompletion.acreate(messages=prompt, model=model_id, **params)  # type: ignore
+        prompt_ = [{"role": "user", "content": prompt}]
+        api_response: OpenAICompletion = await openai.ChatCompletion.acreate(messages=prompt_, model=model_id, **params)  # type: ignore
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         context_token_cost, completion_token_cost = price_per_token(model_id)
@@ -561,7 +563,7 @@ class OpenAIBaseModel(OpenAIModel):
     ) -> list[LLMResponse]:
         LOGGER.debug(f"Making {model_id} call")
         api_start = time.time()
-        api_response: OpenAICompletion = await openai.ChatCompletion.acreate(messages=prompt, model=model_id, **params)  # type: ignore
+        api_response: OpenAICompletion = await openai.Completion.acreate(prompt=prompt, model=model_id, **params)
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         if "gpt" not in model_id:
