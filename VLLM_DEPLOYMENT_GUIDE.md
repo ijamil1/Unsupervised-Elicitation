@@ -65,17 +65,23 @@ conda activate ue
 ### 4. Install Dependencies
 
 ```bash
-# Install all required packages from requirements.txt
-pip install -r requirements.txt
+# Install the project as an editable package
+# This installs all dependencies AND makes the code importable
+pip install -e .
 
-# This will install:
-# - vllm (for serving the LLM)
-# - huggingface-hub (for downloading models)
-# - aiohttp, attrs (for async HTTP requests)
-# - All other project dependencies
+# What this does:
+# - Reads requirements.txt and installs all dependencies (vllm, huggingface-hub, etc.)
+# - Installs your project as a package (enables: from core.llm_api import ModelAPI)
+# - Creates editable install (code changes immediately reflected)
 ```
 
-**Note:** The `requirements.txt` includes all necessary packages. The installation may take 5-10 minutes depending on your connection.
+**Alternative (simpler but less robust):**
+```bash
+# If pip install -e . has issues, fall back to:
+pip install -r requirements.txt
+```
+
+**Note:** The installation may take 5-10 minutes depending on your connection. The editable install (`-e`) is recommended because your code uses absolute imports like `from core.llm_api import ModelAPI`.
 
 ### 5. Verify Installation
 
