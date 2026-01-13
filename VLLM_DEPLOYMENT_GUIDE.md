@@ -68,6 +68,8 @@ conda activate ue
 # Install the project as an editable package
 # This installs all dependencies AND makes the code importable
 pip install -e .
+pip uninstall -y numpy
+pip install "numpy<2"
 
 # What this does:
 # - Reads requirements.txt and installs all dependencies (vllm, huggingface-hub, etc.)
@@ -214,6 +216,17 @@ vllm serve meta-llama/Meta-Llama-3.1-405B \
     --gpu-memory-utilization 0.9 \
     --max-model-len 8192 \
     --tensor-parallel-size 8 \
+    --enable-prefix-caching \
+    --max-num-seqs 256 \
+    --max-num-batched-tokens 32768 \
+    --disable-log-requests
+
+vllm serve meta-llama/Meta-Llama-3.1-70B \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --gpu-memory-utilization 0.9 \
+    --max-model-len 8192 \
+    --tensor-parallel-size 4 \
     --enable-prefix-caching \
     --max-num-seqs 256 \
     --max-num-batched-tokens 32768 \

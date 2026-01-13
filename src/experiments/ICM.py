@@ -482,7 +482,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=27565976)
     parser.add_argument("--testbed", type=str, default="truthfulQA")
-    parser.add_argument("--model", type=str, default="meta-llama/Meta-Llama-3.1-405B")
+    parser.add_argument("--model", type=str, default="meta-llama/Meta-Llama-3.1-70B")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_seed", type=int, default=8)
     parser.add_argument("--alpha", type=int, default=1)
@@ -726,7 +726,7 @@ async def zero_shot_chat_main(args):
     correct_cnt = 0
     for idx, i in enumerate(test):
         new_label = await predict_assignment_zero_shot(
-                "meta-llama/Meta-Llama-3.1-405B-Instruct",
+                "meta-llama/Meta-Llama-3.1-70B-Instruct",
                 i
             )
         

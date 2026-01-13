@@ -382,6 +382,7 @@ _GPT_4_MODELS = [
     "meta-llama/llama-2-70b-chat",
     "meta-llama/llama-3.1-8b-instruct",
     "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/Meta-Llama-3.1-70B-Instruct",
     "meta-llama/Meta-Llama-3.1-405B-Instruct",
     "qwen/qwen-2.5-7b-instruct",
     "openai/gpt-4o",
@@ -515,7 +516,8 @@ class OpenAIChatModel(OpenAIModel):
 BASE_MODELS = {
     "meta-llama/Llama-3.1-8B",
     "meta-llama/Llama-3.1-70B",
-    "meta-llama/Meta-Llama-3.1-405B"
+    "meta-llama/Meta-Llama-3.1-405B",
+    "meta-llama/Meta-Llama-3.1-70B"
 }
 
 
