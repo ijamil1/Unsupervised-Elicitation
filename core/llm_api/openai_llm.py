@@ -629,4 +629,3 @@ class OpenAIBaseModel(OpenAIModel):
             print()
 
 
-# %%

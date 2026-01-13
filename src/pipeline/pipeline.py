@@ -28,8 +28,8 @@ def in_notebook():
         return False
     return True
 
-def limit_concurrency_with_retry(model_api, max_concurrent, retries=5):
-    semaphore = asyncio.Semaphore(max_concurrent)
+def limit_concurrency_with_retry(model_api, retries=5):
+    semaphore = asyncio.Semaphore(2)
     rate_limiter = AsyncLimiter(
         max_rate=100,   # requests
         time_period=60 # per second
@@ -115,7 +115,7 @@ class Pipeline:
                 self.config.print_prompt_and_response,
             )
             Pipeline._limited_model_api = limit_concurrency_with_retry(
-                Pipeline._model_api, max_concurrent=2
+                Pipeline._model_api
             )
             Pipeline._initialized = True
         

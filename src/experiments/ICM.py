@@ -381,7 +381,8 @@ async def icm_main(args):
                 assignment=cur_pool,
             )
             results = await pipeline.run()
-            cur_metric = results["evaluate"]   
+            cur_metric = results["evaluate"]
+             
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
@@ -438,13 +439,6 @@ async def icm_main(args):
                 demonstrations = tmp_demonstrations
                 flip_cnt += 1
                 cur_metric = metric
-                with open(f"log_{name}.jsonl", "a") as f:
-                    f.write(json.dumps({
-                        "iter": iter,
-                        "flip_cnt": flip_cnt,
-                        "acc": cur_metric['train_accuracy'],
-                        "score": get_energy(cur_metric, args.alpha),
-                    }) + "\n")
             else:
                 continue
         

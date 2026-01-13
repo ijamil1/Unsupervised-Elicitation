@@ -171,11 +171,11 @@ class ModelAPI:
         # Check if current prompt has already been saved in the save file
         # If so, directly return previous result
         responses = None
-        if use_cache and kwargs.get("save_path") is not None:
-            try:
-                responses = self._load_from_cache(kwargs.get("save_path"))
-            except:
-                logging.error(f"invalid cache data: {kwargs.get('save_path')}")
+        #if use_cache and kwargs.get("save_path") is not None:
+        #    try:
+        #        responses = self._load_from_cache(kwargs.get("save_path"))
+        #    except:
+        #        logging.error(f"invalid cache data: {kwargs.get('save_path')}")
 
         # After loading cache, we do not directly return previous results,
         # but continue running it through parse_fn and re-save it.
@@ -208,6 +208,8 @@ class ModelAPI:
                     n=num_candidates,
                     **kwargs,
                 )
+                print(responses)
+                print("%" * 100)
 
         modified_responses = []
         for response in responses:
@@ -227,14 +229,14 @@ class ModelAPI:
             )
             modified_responses.append(response)
 
-        if kwargs.get("save_path") is not None:
-            if file_sem is not None:
-                async with file_sem:
-                    with open(kwargs.get("save_path"), "w") as f:
-                        json.dump(modified_responses, f, indent=2)
-            else:
-                with open(kwargs.get("save_path"), "w") as f:
-                    json.dump(modified_responses, f, indent=2)
+        #if kwargs.get("save_path") is not None:
+        #    if file_sem is not None:
+        #        async with file_sem:
+        #            with open(kwargs.get("save_path"), "w") as f:
+        #                json.dump(modified_responses, f, indent=2)
+        #    else:
+        #        with open(kwargs.get("save_path"), "w") as f:
+        #            json.dump(modified_responses, f, indent=2)
         return modified_responses[:n]
 
     def reset_cost(self):
