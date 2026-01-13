@@ -93,7 +93,8 @@ def load_secrets(
 
     openai.api_key = secrets[openai_tag]
     os.environ['LLAMA_API_BASE'] = secrets['LLAMA_API_BASE']
-    
+    os.environ['VLLM_BASE_URL'] = secrets.get('VLLM_BASE_URL', 'http://localhost:8000')  # NEW: Load vLLM URL
+
     if organization is not None:
         openai.organization = secrets[organization]
     if secrets.get("API_BASE") is not None:

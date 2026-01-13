@@ -1,0 +1,52 @@
+# vLLM Server Configuration
+#
+# This configuration file defines settings for different model sizes.
+# Use with: vllm serve <model_name> --config configs/vllm_config.yaml
+
+# Configuration for Llama-3.1-405B
+405B:
+  model: "meta-llama/Meta-Llama-3.1-405B"
+  host: "0.0.0.0"
+  port: 8000
+  tensor_parallel_size: 8
+  gpu_memory_utilization: 0.9
+  max_model_len: 8192
+  enable_prefix_caching: true
+  max_num_seqs: 256
+  max_num_batched_tokens: 32768
+  disable_log_requests: true
+  trust_remote_code: false
+
+# Configuration for Llama-3.1-70B
+70B:
+  model: "meta-llama/Llama-3.1-70B"
+  host: "0.0.0.0"
+  port: 8000
+  tensor_parallel_size: 4
+  gpu_memory_utilization: 0.9
+  max_model_len: 8192
+  enable_prefix_caching: true
+  max_num_seqs: 128
+  max_num_batched_tokens: 16384
+  disable_log_requests: true
+  trust_remote_code: false
+
+# Configuration for Llama-3.1-8B
+8B:
+  model: "meta-llama/Llama-3.1-8B"
+  host: "0.0.0.0"
+  port: 8000
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.9
+  max_model_len: 8192
+  enable_prefix_caching: true
+  max_num_seqs: 64
+  max_num_batched_tokens: 8192
+  disable_log_requests: true
+  trust_remote_code: false
+
+# Notes:
+# - enable_prefix_caching: Critical for ICM performance (5-10x speedup)
+# - max_num_seqs: Maximum number of sequences that can be processed together
+# - max_num_batched_tokens: Maximum total tokens across all sequences in a batch
+# - tensor_parallel_size: Number of GPUs to use for distributed inference

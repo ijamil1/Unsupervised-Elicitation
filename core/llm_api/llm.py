@@ -19,6 +19,7 @@ from core.llm_api.openai_llm import (
     OpenAIBaseModel,
     OpenAIChatModel,
 )
+from core.llm_api.vllm_llm import VLLMClient
 from core.utils import load_secrets
 
 LOGGER = logging.getLogger(__name__)
@@ -32,9 +33,12 @@ class ModelAPI:
     )
     organization: None = None
     print_prompt_and_response: bool = False
+    use_vllm: bool = True  # NEW: Flag to enable vLLM (default: True)
+    vllm_base_url: str = None  # NEW: vLLM server URL (defaults to VLLM_BASE_URL from SECRETS)
 
     _openai_base: OpenAIBaseModel = attrs.field(init=False)
     _openai_chat: OpenAIChatModel = attrs.field(init=False)
+    _vllm_client: VLLMClient = attrs.field(init=False)  # NEW: vLLM client
 
     running_cost: float = attrs.field(init=False, default=0)
     model_timings: dict[str, list[float]] = attrs.field(init=False, default={})
@@ -44,6 +48,8 @@ class ModelAPI:
         secrets = load_secrets()
         if self.organization is None:
             self.organization = "NYU_ORG"
+
+        # Initialize OpenAI clients (keep for fallback or chat models)
         self._openai_base = OpenAIBaseModel(
             frac_rate_limit=self.openai_fraction_rate_limit,
             organization=secrets[self.organization],
@@ -54,6 +60,15 @@ class ModelAPI:
             organization=secrets[self.organization],
             print_prompt_and_response=self.print_prompt_and_response,
         )
+
+        # NEW: Initialize vLLM client
+        if self.use_vllm:
+            vllm_url = self.vllm_base_url or secrets.get('VLLM_BASE_URL', 'http://localhost:8000')
+            self._vllm_client = VLLMClient(
+                base_url=vllm_url,
+                print_prompt_and_response=self.print_prompt_and_response,
+            )
+            LOGGER.info(f"Initialized vLLM client at {vllm_url}")
 
         Path("./prompt_history").mkdir(exist_ok=True)
 
@@ -143,6 +158,10 @@ class ModelAPI:
             # # trick to double rate limit for most recent model only
 
         def model_id_to_class(model_id: str) -> ModelAPIProtocol:
+            # NEW: Route base models to vLLM if enabled
+            if self.use_vllm and model_id in BASE_MODELS:
+                return self._vllm_client
+
             if model_id in ["gpt-4-base", "gpt-3.5-turbo-instruct"]:
                 return (
                     self._openai_base_arg

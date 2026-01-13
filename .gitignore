@@ -153,3 +153,4 @@ wandb/
 src/results
 results*
 logs
+.claude/settings.local.json

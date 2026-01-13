@@ -28,19 +28,37 @@ def in_notebook():
         return False
     return True
 
-def limit_concurrency_with_retry(model_api, retries=5):
-    semaphore = asyncio.Semaphore(2)
-    rate_limiter = AsyncLimiter(
-        max_rate=100,   # requests
-        time_period=60 # per second
-    )
+def limit_concurrency_with_retry(model_api, use_vllm=False, retries=5):
+    """
+    Apply rate limiting only for external APIs, not for self-hosted vLLM.
 
-    async def limited_model_api(*args, **kwargs):
-        async with rate_limiter:
-            async with semaphore:
-                return await model_api(*args, **kwargs)
+    Args:
+        model_api: The ModelAPI instance
+        use_vllm: Whether using vLLM (no rate limiting needed)
+        retries: Number of retries (unused, kept for compatibility)
 
-    return limited_model_api
+    Returns:
+        Wrapped model_api with or without rate limiting
+    """
+    if use_vllm:
+        # No rate limiting for self-hosted vLLM - unlimited throughput
+        async def unlimited_model_api(*args, **kwargs):
+            return await model_api(*args, **kwargs)
+        return unlimited_model_api
+    else:
+        # Apply rate limiting for external APIs
+        semaphore = asyncio.Semaphore(2)
+        rate_limiter = AsyncLimiter(
+            max_rate=100,   # requests
+            time_period=60  # per second
+        )
+
+        async def limited_model_api(*args, **kwargs):
+            async with rate_limiter:
+                async with semaphore:
+                    return await model_api(*args, **kwargs)
+
+        return limited_model_api
 
 class Task:
     def __init__(self, name, func, use_cache, dependencies=[]):
@@ -101,24 +119,27 @@ class Pipeline:
     _limited_model_api = None
     _initialized = False
 
-    def __init__(self, config):
+    def __init__(self, config, use_vllm=True):  # NEW: use_vllm parameter
         self.config = config
+        self.use_vllm = use_vllm  # NEW: Store vLLM flag
         self.steps = []
         self.step_names = set()
         self.results = {}
-        
+
         # Initialize shared model_api and limited_model_api on first access
         if not Pipeline._initialized:
             Pipeline._model_api = ModelAPI(
                 self.config.openai_fraction_rate_limit,
                 self.config.organization,
                 self.config.print_prompt_and_response,
+                use_vllm=use_vllm,  # NEW: Pass vLLM flag to ModelAPI
             )
             Pipeline._limited_model_api = limit_concurrency_with_retry(
-                Pipeline._model_api
+                Pipeline._model_api,
+                use_vllm=use_vllm,  # NEW: Conditional rate limiting
             )
             Pipeline._initialized = True
-        
+
         self.file_sem = asyncio.BoundedSemaphore(self.config.num_open_files)
         self.cost = {"red": 0, "blue": 0}
 

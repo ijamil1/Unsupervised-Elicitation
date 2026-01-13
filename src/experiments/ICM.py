@@ -22,6 +22,7 @@ from src.model_querying.prompt_creation import (
 from src.model_querying.solution_extraction import (
     extract_claim_logprobs,
     extract_decision_logprobs,
+    get_yes_no_diff_logprobs,
 )
 from src.pipeline.pipeline import Pipeline, PipelineConfig
 from src.tools.dataloaders import (
@@ -68,6 +69,57 @@ def update_assign(data):
         else:
             value["label"] = 0
     return data
+
+
+async def compute_logprobs_batched(model_api, model_id, examples_dict):
+    """
+    Compute log probabilities for all examples using batched vLLM inference.
+
+    This is the KEY optimization: instead of making len(examples_dict) separate API calls,
+    we make a single batched call to vLLM which processes all prompts together.
+
+    Args:
+        model_api: The ModelAPI instance (should route to vLLM)
+        model_id: Model identifier (e.g., "meta-llama/Meta-Llama-3.1-405B")
+        examples_dict: Dict of {example_id: example_data}
+                      Each example must have "demonstration" field prepared
+
+    Returns:
+        Dict of {example_id: score}
+    """
+    example_ids = list(examples_dict.keys())
+    examples = list(examples_dict.values())
+
+    # Prepare all prompts at once
+    all_prompts = []
+    for example in examples:
+        prompt = get_judge_prompt_fewshot(example, pipeline=False)
+        all_prompts.append(prompt)
+
+    # CRITICAL: Make a single batched request to vLLM
+    # vLLM will process all prompts in parallel using batch inference
+    # Batch size is automatically determined by len(all_prompts) = len(cur_pool)
+    responses = await model_api(
+        model_id,
+        all_prompts,  # List of prompts - vLLM handles batching internally
+        logprobs=True,
+        top_logprobs=20,
+        max_tokens=1,
+        temperature=0.0,
+    )
+
+    # Extract scores from batched responses
+    scores = {}
+    for example_id, response in zip(example_ids, responses):
+        try:
+            logprobs = response[0]["response"]["logprobs"][0]
+            score = get_yes_no_diff_logprobs(logprobs)
+            scores[example_id] = score
+        except Exception as e:
+            print(f"Error extracting score for example {example_id}: {e}")
+            scores[example_id] = 0
+
+    return scores
 
 
 def get_pipeline(
@@ -168,6 +220,147 @@ def get_pipeline(
         use_cache=use_cache,
     )
 
+
+    eval_preds = pipeline.add_eval_step(
+        "evaluate",
+        calculate_accuracy,
+        dependencies=[get_train_preds],
+    )
+    return pipeline
+
+
+def get_pipeline_batched(
+    model,
+    name=None,
+    use_cache=True,
+    num_problems=None,
+    decision_id=None,
+    iter=None,
+    assignment=None,
+):
+    """
+    BATCHED VERSION of get_pipeline that uses vLLM's batch inference.
+
+    Instead of creating N separate API calls (one per example), this creates a single
+    batched call that processes all examples together. This is the KEY optimization.
+
+    Args:
+        model: Model identifier
+        name: Pipeline name
+        use_cache: Whether to cache results
+        num_problems: Number of problems (unused)
+        decision_id: Decision ID (unused)
+        iter: Iteration number
+        assignment: Dict of examples with labels
+
+    Returns:
+        Pipeline instance configured for batched inference
+    """
+    pipeline_name = f"iterative-truth-assign-iter-{iter}-batched"
+    if decision_id is not None:
+        pipeline_name += f"-{decision_id}"
+    if name is not None:
+        pipeline_name += "-" + name
+
+    ROOT_DIR = get_root_directory()
+
+    pipeline_config = PipelineConfig(
+        pipeline_name,
+        openai_fraction_rate_limit=0.99,
+        num_problems=num_problems,
+        use_cache=use_cache,
+    )
+    pipeline = Pipeline(pipeline_config, use_vllm=True)  # Enable vLLM
+
+    assert assignment is not None
+    initial_assign = pipeline.add_load_data_step(
+        "get_assign", load_assignments, assignment
+    )
+
+    def add_train_demonstrations(train_data):
+        """Same as before - prepare leave-one-out demonstrations"""
+        copy_data = deepcopy(train_data)
+        copy_data = {k: v for k, v in copy_data.items() if v["label"] is not None}
+        keys = list(copy_data.keys())
+        values = list(copy_data.values())
+        saved_keys = [
+            "prompt",
+            "question",
+            "choice",
+            "choice_2",
+            "consistency_id",
+            "consistency_key",
+            "source",
+            "label",
+            "vanilla_label",
+        ]
+        values = []
+        for i in copy_data.values():
+            values.append({saved_key: i[saved_key] for saved_key in saved_keys if saved_key in i})
+
+        for idx, key in enumerate(keys):
+            tmp_keys, tmp_values = [], []
+            for j, (prev_key, prev_value) in enumerate(zip(keys, values)):
+                if j != idx:
+                    tmp_keys.append(prev_key)
+                    tmp_values.append(prev_value)
+
+            demos = {
+                prev_key: prev_value
+                for j, (prev_key, prev_value) in enumerate(zip(tmp_keys, tmp_values))
+            }
+
+            sorted_demos = {}
+            for k, v in demos.items():
+                q = v["consistency_id"]
+                if q not in sorted_demos:
+                    sorted_demos[q] = []
+                sorted_demos[q].append((k, v))
+
+            out_sorted_demos = {}
+            for group in sorted_demos.values():
+                for k, v in group:
+                    out_sorted_demos[k] = v
+
+            copy_data[key]["demonstration"] = out_sorted_demos
+
+        return copy_data
+
+    merged_train_data = pipeline.add_transformation_step(
+        "add_train_demonstration",
+        add_train_demonstrations,
+        dependencies=[initial_assign],
+    )
+
+    # NEW: Batched inference step replaces add_query_step
+    async def batched_inference_step(train_data, use_cache, index):
+        """
+        Custom transformation step that performs batched inference.
+
+        This replaces the query_model step which would create N separate API calls.
+        Instead, we call compute_logprobs_batched which makes a single batched call.
+        """
+        # Compute scores using batched vLLM inference
+        scores = await compute_logprobs_batched(
+            pipeline.model_api,
+            model,
+            train_data,
+        )
+
+        # Add scores to examples
+        result = {}
+        for example_id, example in train_data.items():
+            example_copy = example.copy()
+            example_copy["score"] = scores.get(example_id, 0)
+            result[example_id] = example_copy
+
+        return result
+
+    get_train_preds = pipeline.add_transformation_step(
+        "get_train_preds_batched",
+        batched_inference_step,
+        dependencies=[merged_train_data],
+    )
 
     eval_preds = pipeline.add_eval_step(
         "evaluate",
@@ -373,7 +566,7 @@ async def icm_main(args):
         }
 
         if iter == 0:
-            pipeline = get_pipeline(
+            pipeline = get_pipeline_batched(  # CHANGED: Use batched version
                 args.model,
                 name=name,
                 num_problems=None,
@@ -418,7 +611,7 @@ async def icm_main(args):
                 for k, v in tmp_demonstrations.items()
                 if v["label"] is not None
             }
-            pipeline = get_pipeline(
+            pipeline = get_pipeline_batched(  # CHANGED: Use batched version
                 model=args.model,
                 name=name,
                 num_problems=None,
