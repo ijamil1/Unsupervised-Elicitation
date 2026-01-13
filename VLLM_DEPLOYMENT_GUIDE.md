@@ -287,6 +287,87 @@ python ICM.py \
     --K 1500
 ```
 
+### Copying Results to Local Machine
+
+After the experiment completes, ICM generates output files including `figure_1.png` and result data. To copy these to your local machine:
+
+#### Option 1: Using SCP (Secure Copy)
+
+**From your local machine:**
+```bash
+# Copy a single file
+scp user@gpu-server:/path/to/Unsupervised-Elicitation/figure_1.png ~/Desktop/
+
+# Copy entire results directory
+scp -r user@gpu-server:/path/to/Unsupervised-Elicitation/results/ ~/Desktop/results/
+
+# Copy specific experiment outputs
+scp user@gpu-server:/path/to/Unsupervised-Elicitation/src/experiments/figure_1.png ~/Downloads/
+```
+
+#### Option 2: Using rsync (Better for Multiple Files)
+
+**From your local machine:**
+```bash
+# Sync entire results directory
+rsync -avz --progress user@gpu-server:/path/to/Unsupervised-Elicitation/results/ ~/local-results/
+
+# Sync specific files with pattern matching
+rsync -avz --progress user@gpu-server:/path/to/Unsupervised-Elicitation/*.png ~/Downloads/
+```
+
+**Advantages of rsync:**
+- Shows progress bar
+- Only transfers changed files
+- Can resume interrupted transfers
+
+#### Option 3: Using SFTP (Interactive)
+
+**From your local machine:**
+```bash
+# Start SFTP session
+sftp user@gpu-server
+
+# Navigate to directory
+cd /path/to/Unsupervised-Elicitation/src/experiments
+
+# Download file
+get figure_1.png
+
+# Download multiple files
+mget *.png
+
+# Download directory
+get -r results/
+
+# Exit
+quit
+```
+
+#### Option 4: VS Code Remote (Recommended for Development)
+
+If using VS Code with Remote-SSH extension:
+1. Connect to remote machine via Remote-SSH
+2. Open the project folder remotely
+3. Right-click `figure_1.png` → Download
+4. Files automatically sync to local machine
+
+#### Quick Reference
+
+**Find the output files on remote:**
+```bash
+# On remote machine
+cd ~/Unsupervised-Elicitation
+find . -name "figure_1.png"
+find . -name "*.png" -mtime -1  # Files modified in last 24 hours
+ls -lh results/  # Check results directory
+```
+
+**Common file locations:**
+- Main figure: `figure_1.png` (in repo root or src/experiments/)
+- Results data: `results/` directory
+- Logs: Various locations depending on experiment config
+
 ### Key Changes from Original
 
 1. **No rate limiting**: The code automatically detects vLLM and disables rate limiting
