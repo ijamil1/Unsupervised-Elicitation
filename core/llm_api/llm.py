@@ -227,8 +227,7 @@ class ModelAPI:
                     n=num_candidates,
                     **kwargs,
                 )
-                print(responses)
-                print("%" * 100)
+         
 
         modified_responses = []
         for response in responses:

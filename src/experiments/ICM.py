@@ -371,43 +371,86 @@ def get_pipeline_batched(
 
 
 async def predict_assignment(model, example, demonstrations):
+    """
+    Predict label for a single example using vLLM direct inference.
+
+    Modified to follow the same pattern as compute_logprobs_batched:
+    - Makes direct API call to vLLM
+    - Extracts logprobs and computes score directly (no parse_fn)
+    - Uses get_yes_no_diff_logprobs for consistency
+
+    Args:
+        model: Model identifier
+        example: The example to label
+        demonstrations: Dict of labeled examples (leave-one-out)
+
+    Returns:
+        Predicted label (0 or 1)
+    """
+    # Prepare demonstrations (leave out current example)
     demos = [
         v
         for k, v in demonstrations.items()
         if k != example["uid"] and v["label"] is not None
     ]
-    model_requests = [
-        model_api(
-            model,
-            get_judge_prompt_fewshot(
-                example,
-                demos,
-                pipeline=False,
-            ),
-            logprobs=True,
-            top_logprobs=20,
-            max_tokens=1,
-            parse_fn=extract_claim_logprobs,
-        )
-    ]
-    responses = await asyncio.gather(*model_requests)
-    score = responses[0][0]["score"]
+
+    # Create prompt
+    prompt = get_judge_prompt_fewshot(
+        example,
+        demos,
+        pipeline=False,
+    )
+
+    # Make direct API call to vLLM (single prompt, not batched)
+    response = await model_api(
+        model,
+        prompt,  # Single prompt string
+        logprobs=True,
+        top_logprobs=20,
+        temperature=0.0,
+        max_tokens=1,
+    )
+
+    # Extract logprobs and compute score directly (same as compute_logprobs_batched)
+    try:
+        logprobs = response[0]["response"]["logprobs"][0]
+        score = get_yes_no_diff_logprobs(logprobs)
+    except Exception as e:
+        print(f"Error extracting score for example {example.get('uid', 'unknown')}: {e}")
+        score = 0
+
+    # Convert score to binary label
     new_label = score > 0
     return int(new_label)
 
 async def predict_assignment_zero_shot(model, example):
-    model_requests = [
-        model_api(
-            model,
-            get_judge_prompt_zeroshot(example, pipeline=False),
-            logprobs=True,
-            top_logprobs=20,
-            max_tokens=1,
-            parse_fn=extract_claim_logprobs,
-        )
-    ]
-    responses = await asyncio.gather(*model_requests)
-    score = responses[0][0]["score"]
+    """
+    Predict label for a single example using zero-shot inference.
+
+    Modified to follow the same pattern as predict_assignment.
+    """
+    # Create zero-shot prompt
+    prompt = get_judge_prompt_zeroshot(example, pipeline=False)
+
+    # Make direct API call to vLLM (single prompt, not batched)
+    response = await model_api(
+        model,
+        prompt,
+        logprobs=True,
+        top_logprobs=20,
+        temperature=0.0,
+        max_tokens=1,
+    )
+
+    # Extract logprobs and compute score directly
+    try:
+        logprobs = response[0]["response"]["logprobs"][0]
+        score = get_yes_no_diff_logprobs(logprobs)
+    except Exception as e:
+        print(f"Error extracting score for example {example.get('uid', 'unknown')}: {e}")
+        score = 0
+
+    # Convert score to binary label
     new_label = score > 0
     return int(new_label)
 
@@ -598,13 +641,6 @@ async def icm_main(args):
         if demonstrations[example_id]["label"] != new_label:
             tmp_demonstrations = deepcopy(demonstrations)
             tmp_demonstrations[example_id]["label"] = new_label
-            dummy_metric = {
-                "train_prob": -1e6,
-                "train_accuracy": 1.0,
-                "train_predict_distribution": {"0": 0, "1": 0},
-                "train_label_distribution": {"0": 0, "1": 0},
-            }
-
             
             tmp_pool = {
                 k: v

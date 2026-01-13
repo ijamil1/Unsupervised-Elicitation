@@ -25,9 +25,96 @@ Choose based on your model size:
 - vLLM library
 - Access to Llama model weights (HuggingFace)
 
+## Remote Machine Setup (Cloud Deployment)
+
+If you're deploying on a cloud GPU machine (Lambda Labs, RunPod, etc.), follow these steps:
+
+### 1. SSH into Remote Machine
+
+```bash
+# SSH into your cloud GPU instance
+ssh user@your-gpu-server-ip
+
+# Verify GPUs are available
+nvidia-smi
+```
+
+### 2. Clone Repository
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/Unsupervised-Elicitation.git
+cd Unsupervised-Elicitation
+
+# Switch to vllm-integration branch
+git checkout vllm-integration
+```
+
+### 3. Setup Python Environment
+
+```bash
+# Create a virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate
+
+# Or use conda
+conda create -n ue python=3.10
+conda activate ue
+```
+
+### 4. Install Dependencies
+
+```bash
+# Install all required packages from requirements.txt
+pip install -r requirements.txt
+
+# This will install:
+# - vllm (for serving the LLM)
+# - huggingface-hub (for downloading models)
+# - aiohttp, attrs (for async HTTP requests)
+# - All other project dependencies
+```
+
+**Note:** The `requirements.txt` includes all necessary packages. The installation may take 5-10 minutes depending on your connection.
+
+### 5. Verify Installation
+
+```bash
+# Check vLLM installation
+python -c "import vllm; print(f'vLLM version: {vllm.__version__}')"
+
+# Check CUDA is available
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU count: {torch.cuda.device_count()}')"
+
+# Check HuggingFace CLI
+which huggingface-cli
+```
+
+### 6. Setup Secrets File
+
+```bash
+# Create SECRETS file with your configuration
+cat > SECRETS << 'EOF'
+API_KEY=your_api_key_here
+NYU_ORG=None
+ARG_ORG=None
+LLAMA_API_BASE=https://api.hyperbolic.xyz/v1
+VLLM_BASE_URL=http://localhost:8000
+EOF
+
+# Important: Update VLLM_BASE_URL if accessing from a different machine
+# For remote access: VLLM_BASE_URL=http://your-gpu-server-ip:8000
+```
+
+### 7. Continue with HuggingFace Setup
+
+Now proceed to the "Installation" section below to setup HuggingFace and download models.
+
+---
+
 ## Installation
 
-### 1. Install vLLM
+### 1. Install vLLM (Skip if using requirements.txt above)
 
 ```bash
 # Option 1: Via pip
@@ -42,20 +129,52 @@ cd vllm
 pip install -e .
 ```
 
-### 2. Download Model Weights
+### 2. Install HuggingFace CLI and Setup Account
 
+**Install the CLI:**
 ```bash
-# Login to HuggingFace (you need access to Llama models)
-huggingface-cli login
+# Install HuggingFace Hub library (includes CLI)
+pip install huggingface-hub
 
-# Download model (will cache locally)
-huggingface-cli download meta-llama/Meta-Llama-3.1-405B
-
-# Or for 70B
-huggingface-cli download meta-llama/Llama-3.1-70B
+# Verify installation
+which huggingface-cli
 ```
 
-### 3. Verify Installation
+**Setup HuggingFace Account:**
+1. Create a free account at https://huggingface.co/join
+2. Request access to Llama models:
+   - Visit https://huggingface.co/meta-llama/Meta-Llama-3.1-405B
+   - Click "Request Access" and accept the license agreement
+   - Wait for Meta's approval (usually a few hours to 1 day)
+3. Generate an access token:
+   - Go to https://huggingface.co/settings/tokens
+   - Create a new token with "Read" permissions
+   - Copy the token for next step
+
+**Login to HuggingFace:**
+```bash
+# Login with your token
+huggingface-cli login
+
+# Paste your token when prompted
+# Token will be saved to ~/.cache/huggingface/token
+```
+
+### 3. Download Model Weights
+
+```bash
+# Download model (will cache locally to ~/.cache/huggingface/)
+huggingface-cli download meta-llama/Meta-Llama-3.1-405B
+
+# Or for 70B/8B models
+huggingface-cli download meta-llama/Llama-3.1-70B
+huggingface-cli download meta-llama/Llama-3.1-8B
+
+# Note: 405B is ~800GB, 70B is ~140GB, 8B is ~16GB
+# Ensure you have sufficient disk space!
+```
+
+### 4. Verify Installation
 
 ```bash
 python -c "import vllm; print(vllm.__version__)"
@@ -386,16 +505,21 @@ For issues:
 
 ## Appendix: Performance Benchmarks
 
-Based on testing with Llama-3.1-405B on 8× A100 80GB:
+Expected performance with Llama-3.1-405B on 8× A100 80GB:
 
 | Metric | Value |
 |--------|-------|
-| Inference latency (256 examples) | 2.1s |
-| GPU utilization | 92% |
-| Prefix cache hit rate | 98.3% |
-| Time per ICM iteration | 32s |
-| Total runtime (K=1500) | 13.3 hours |
-| Throughput | 122 examples/second |
-| Cost per run (Lambda Labs) | ~$160 |
+| Batched inference latency (256 examples) | ~4s |
+| GPU utilization | 85-95% |
+| Prefix cache hit rate | 95-98% |
+| Average time per ICM iteration | ~1.7s |
+| Total runtime (K=1500) | 40-55 minutes |
+| Cost per run (Lambda Labs @ $10/hr) | ~$8-10 |
 
-**Speedup vs external API**: ~4.7×
+**Performance Notes:**
+- Each iteration calls `predict_assignment()` (~0.5s) plus conditionally calls `get_pipeline_batched()` (~3s) when label changes
+- Label change rate: ~80% early, ~40% mid, ~20% late in training
+- Batch size grows from 8 → 256 as labeled set expands
+- Actual runtime varies based on acceptance rate and GPU efficiency
+
+**Speedup vs external API**: ~80× faster (60+ hours → 45 minutes)

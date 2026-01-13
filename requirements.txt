@@ -2,10 +2,13 @@ adjustText
 alembic
 altair
 anthropic
+aiohttp
+attrs
 cattrs
 datasets
 fastapi==0.100.0
 fire
+huggingface-hub
 hydra-core
 matplotlib
 mistralai
@@ -28,4 +31,5 @@ tqdm
 trueskill
 typer[all]
 uvicorn[standard]==0.22.0
+vllm
 wandb
