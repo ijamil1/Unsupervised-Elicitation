@@ -108,6 +108,7 @@ async def compute_logprobs_batched(model_api, model_id, examples_dict):
         temperature=0.0,
     )
 
+    
     # Extract scores from batched responses
     scores = {}
     for example_id, response in zip(example_ids, responses):
@@ -116,7 +117,8 @@ async def compute_logprobs_batched(model_api, model_id, examples_dict):
             score = get_yes_no_diff_logprobs(logprobs)
             scores[example_id] = score
         except Exception as e:
-            print(f"Error extracting score for example {example_id}: {e}")
+            print('Responses: ', responses)
+            print(f"Error in compute_logprobs_batched extracting score for example {example_id}: {e}")
             scores[example_id] = 0
 
     return scores
@@ -304,12 +306,14 @@ async def predict_assignment(model, example, demonstrations):
         max_tokens=1,
     )
 
+    
     # Extract logprobs and compute score directly (same as compute_logprobs_batched)
     try:
         logprobs = response[0]["response"]["logprobs"][0]
         score = get_yes_no_diff_logprobs(logprobs)
     except Exception as e:
-        print(f"Error extracting score for example {example.get('uid', 'unknown')}: {e}")
+        print('response: ', response)
+        print(f"Error in predict_assignment extracting score for example {example.get('uid', 'unknown')}: {e}")
         score = 0
 
     # Convert score to binary label
@@ -339,7 +343,7 @@ async def predict_assignment_zero_shot(model, example):
         logprobs = response[0]["response"]["logprobs"][0]
         score = get_yes_no_diff_logprobs(logprobs)
     except Exception as e:
-        print(f"Error extracting score for example {example.get('uid', 'unknown')}: {e}")
+        print(f"Error in predict_assignment_zero_shot extracting score for example {example.get('uid', 'unknown')}: {e}")
         score = 0
 
     # Convert score to binary label
@@ -707,9 +711,16 @@ async def async_main():
     print("task: ", args.testbed)
     random.seed(args.seed)
 
+    print('entering icm_main')
     icm_test_accuracy = await icm_main(args)
+
+    print('entering golden_supervision benchmarking method')
     golden_supervision_test_accuracy = await golden_supervision_main(args)
+
+    print('entering zero-shot chat benchamrking method')
     zero_shot_chat_test_accuracy = await zero_shot_chat_main(args)
+
+    print('entering zero-shot pretrained benchmarking method')
     zero_shot_pretrained_test_accuracy = await zero_shot_pretrained_main(args)
 
     print(f"ICM test accuracy = {icm_test_accuracy}")

@@ -22,25 +22,22 @@ case $MODEL_SIZE in
   405B)
     MODEL_NAME="meta-llama/Meta-Llama-3.1-405B"
     TENSOR_PARALLEL_SIZE=8  # 8× A100 80GB or H100
-    MAX_MODEL_LEN=8192
+    MAX_MODEL_LEN=15000
     MAX_NUM_SEQS=256
-    MAX_NUM_BATCHED_TOKENS=32768
     echo "Launching Llama-3.1-405B (requires 8× A100 80GB or H100 GPUs)"
     ;;
   70B)
     MODEL_NAME="meta-llama/Llama-3.1-70B"
     TENSOR_PARALLEL_SIZE=4  # 4× A40 or 2× A100 80GB
-    MAX_MODEL_LEN=8192
-    MAX_NUM_SEQS=128
-    MAX_NUM_BATCHED_TOKENS=16384
+    MAX_MODEL_LEN=15000
+    MAX_NUM_SEQS=256
     echo "Launching Llama-3.1-70B (requires 4× A40 or 2× A100 80GB GPUs)"
     ;;
   8B)
     MODEL_NAME="meta-llama/Llama-3.1-8B"
     TENSOR_PARALLEL_SIZE=1  # 1× A100 40GB or A6000
-    MAX_MODEL_LEN=8192
-    MAX_NUM_SEQS=64
-    MAX_NUM_BATCHED_TOKENS=8192
+    MAX_MODEL_LEN=15000
+    MAX_NUM_SEQS=256
     echo "Launching Llama-3.1-8B (requires 1× A100 40GB or A6000 GPU)"
     ;;
   *)
