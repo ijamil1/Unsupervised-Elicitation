@@ -134,6 +134,8 @@ dmypy.json
 .pyre/
 SECRETS
 data/
+!praxis_labs_ue1/data/
+!praxis_labs_ue1/data/*.json
 .DS_Store
 pyrightconfig.json
 *.db
