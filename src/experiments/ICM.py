@@ -107,18 +107,18 @@ async def compute_logprobs_batched(model_api, model_id, examples_dict):
         max_tokens=1,
         temperature=0.0,
     )
-
+    assert len(responses) == len(examples)
     
     # Extract scores from batched responses
     scores = {}
     for example_id, response in zip(example_ids, responses):
         try:
-            logprobs = response[0]["response"]["logprobs"][0]
+            logprobs = response["response"]["logprobs"][0]
             score = get_yes_no_diff_logprobs(logprobs)
             scores[example_id] = score
         except Exception as e:
-            print('Responses: ', responses)
-            print(f"Error in compute_logprobs_batched extracting score for example {example_id}: {e}")
+            print(response)
+            print(f"Error in compute_logprobs_batched extracting score for example {example_id}: {e}; there are {len(responses)} responses in total")
             scores[example_id] = 0
 
     return scores
@@ -629,6 +629,7 @@ async def zero_shot_chat_main(args):
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
+        time.sleep(0.5)
     return correct_cnt / len(test)
 
 async def zero_shot_pretrained_main(args):
@@ -717,7 +718,7 @@ async def async_main():
     print('entering golden_supervision benchmarking method')
     golden_supervision_test_accuracy = await golden_supervision_main(args)
 
-    print('entering zero-shot chat benchamrking method')
+    print('entering zero-shot chat benchmarking method')
     zero_shot_chat_test_accuracy = await zero_shot_chat_main(args)
 
     print('entering zero-shot pretrained benchmarking method')
