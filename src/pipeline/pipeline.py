@@ -7,8 +7,6 @@ from functools import wraps
 import random
 from tqdm.auto import tqdm
 
-from aiolimiter import AsyncLimiter
-
 from core.llm_api.llm import ModelAPI
 from src.datatypes.enums import Language
 from src.runners.query_model import QueryConfigBuilder, query_model
@@ -84,7 +82,6 @@ class PipelineConfig:
 class Pipeline:
     # Class variables shared across all instances
     _model_api = None
-    _limited_model_api = None
     _initialized = False
 
     def __init__(self, config, use_vllm=True):  # NEW: use_vllm parameter
