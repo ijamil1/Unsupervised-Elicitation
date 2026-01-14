@@ -70,7 +70,7 @@ echo "========================================="
 echo ""
 
 # Check if vLLM is installed
-if ! command -v vllm &> /dev/null; then
+if ! python -c "import vllm" &> /dev/null; then
     echo "Error: vLLM is not installed. Install with: pip install vllm"
     exit 1
 fi
@@ -81,7 +81,9 @@ echo "The server will be accessible at http://$HOST:$PORT"
 echo "Press Ctrl+C to stop the server"
 echo ""
 
-vllm serve "$MODEL_NAME" \
+# Use Python module instead of vllm CLI command (works even if vllm not in PATH)
+python -m vllm.entrypoints.openai.api_server \
+    --model "$MODEL_NAME" \
     --host "$HOST" \
     --port "$PORT" \
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \

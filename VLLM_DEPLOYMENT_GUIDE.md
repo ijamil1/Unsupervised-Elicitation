@@ -29,6 +29,14 @@ Choose based on your model size:
 
 If you're deploying on a cloud GPU machine (Lambda Labs, RunPod, etc.), follow these steps:
 
+**Storage Requirements**:
+- **8B model**: 50 GB minimum
+- **70B model**: 300 GB minimum (not 140 GB - see note below)
+- **405B model**: 850 GB minimum
+
+**Important**: HuggingFace downloads include BOTH safetensors files AND original PyTorch checkpoints, roughly doubling the advertised model size. For example, Llama-3.1-70B is advertised as 140 GB but actually requires ~285 GB (144 GB safetensors + 141 GB original/*.pth files).
+
+
 ### 1. SSH into Remote Machine
 
 ```bash
@@ -68,13 +76,18 @@ conda activate ue
 # Install the project as an editable package
 # This installs all dependencies AND makes the code importable
 pip install -e .
+
+# Fix compatibility issues with vLLM
 pip uninstall -y numpy
 pip install "numpy<2"
+pip install "transformers>=4.40.0,<4.48.1"
 
 # What this does:
 # - Reads requirements.txt and installs all dependencies (vllm, huggingface-hub, etc.)
 # - Installs your project as a package (enables: from core.llm_api import ModelAPI)
 # - Creates editable install (code changes immediately reflected)
+# - Downgrades numpy (vLLM incompatible with numpy 2.x)
+# - Pins transformers to 4.40.0-4.48.0 (vLLM 0.4.1 requires >=4.40.0, but lm-format-enforcer breaks with >=4.48.1)
 ```
 
 **Alternative (simpler but less robust):**
@@ -137,16 +150,8 @@ cd vllm
 pip install -e .
 ```
 
-### 2. Install HuggingFace CLI and Setup Account
+### 2. Setup HuggingFace Account
 
-**Install the CLI:**
-```bash
-# Install HuggingFace Hub library (includes CLI)
-pip install huggingface-hub
-
-# Verify installation
-which huggingface-cli
-```
 
 **Setup HuggingFace Account:**
 1. Create a free account at https://huggingface.co/join
@@ -162,7 +167,7 @@ which huggingface-cli
 **Login to HuggingFace:**
 ```bash
 # Login with your token
-huggingface-cli login
+hf auth login
 
 # Paste your token when prompted
 # Token will be saved to ~/.cache/huggingface/token
@@ -171,12 +176,20 @@ huggingface-cli login
 ### 3. Download Model Weights
 
 ```bash
-# Download model (will cache locally to ~/.cache/huggingface/)
-huggingface-cli download meta-llama/Meta-Llama-3.1-405B
 
-# Or for 70B/8B models
-huggingface-cli download meta-llama/Llama-3.1-70B
-huggingface-cli download meta-llama/Llama-3.1-8B
+df -h
+
+mkdir -p /workspace/hf_cache
+mkdir -p /workspace/hf_cache/hub
+mkdir -p /workspace/hf_cache/transformers
+mkdir -p /workspace/tmp
+
+
+export HF_HOME=/workspace/hf_cache
+export HUGGINGFACE_HUB_CACHE=/workspace/hf_cache/hub
+export TRANSFORMERS_CACHE=/workspace/hf_cache/transformers
+export TMPDIR=/workspace/tmp
+```
 
 # Note: 405B is ~800GB, 70B is ~140GB, 8B is ~16GB
 # Ensure you have sufficient disk space!
@@ -257,6 +270,16 @@ curl http://localhost:8000/v1/completions \
     "logprobs": 20,
     "temperature": 0.0
   }'
+
+  curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Meta-Llama-3.1-70B",
+    "prompt": "Question: Is the sky blue?\nClaim: Yes\nI think this claim is ",
+    "max_tokens": 1,
+    "logprobs": 20,
+    "temperature": 0.0
+  }'
 ```
 
 Expected output: JSON with completion and logprobs.
@@ -275,21 +298,6 @@ LLAMA_API_BASE=https://api.hyperbolic.xyz/v1
 VLLM_BASE_URL=http://localhost:8000
 ```
 
-**For remote servers**, change `VLLM_BASE_URL` to your server's address:
-```
-VLLM_BASE_URL=http://your-gpu-server.example.com:8000
-```
-
-### SSH Tunneling (Optional)
-
-If your vLLM server is on a remote machine without public IP:
-
-```bash
-# On your local machine
-ssh -L 8000:localhost:8000 user@gpu-server
-
-# Then use http://localhost:8000 in SECRETS
-```
 
 ## Running ICM with vLLM
 
@@ -456,6 +464,32 @@ The ICM algorithm is **perfect** for prefix caching because:
 - If low, check that `--enable-prefix-caching` is set
 
 ## Troubleshooting
+
+### Issue: ImportError with lm-format-enforcer and transformers
+
+**Symptoms**:
+```
+ImportError: cannot import name 'LogitsWarper' from 'transformers.generation.logits_process'
+ImportError: transformers is not installed. Please install it with "pip install transformers[torch]"
+```
+
+**Root Cause**: Version incompatibility between `vllm 0.4.1`, `lm-format-enforcer`, and `transformers>=4.48.1`
+
+The issue occurs because:
+- vLLM 0.4.1 requires `transformers>=4.40.0` (for Llama 3 support)
+- lm-format-enforcer 0.9.8 (dependency of vLLM) imports `LogitsWarper` from transformers
+- transformers 4.48.1+ removed `LogitsWarper` in favor of `LogitsProcessor`
+
+**Solutions**:
+```bash
+# Pin transformers to compatible version range
+pip install "transformers>=4.40.0,<4.48.1"
+
+# Verify the fix
+python -c "import vllm; print('vLLM imported successfully')"
+```
+
+**Note**: This compatibility issue is fixed in `requirements.txt` with `transformers>=4.40.0,<4.48.1`. If you installed dependencies before this fix, you'll need to manually reinstall with the correct version range.
 
 ### Issue: vLLM Server Won't Start
 
