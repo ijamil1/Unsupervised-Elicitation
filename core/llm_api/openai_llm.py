@@ -12,9 +12,9 @@ from typing import Optional, Union
 
 import attrs
 import openai
+from openai import AsyncOpenAI
 import requests
 import tiktoken
-from openai.openai_object import OpenAIObject as OpenAICompletion
 from tenacity import retry, stop_after_attempt, wait_fixed
 from termcolor import cprint
 
@@ -120,6 +120,10 @@ class OpenAIModel(ModelAPIProtocol):
     print_prompt_and_response: bool = False
     model_ids: set[str] = attrs.field(init=False, default=attrs.Factory(set))
 
+    # OpenAI clients (v2.x API)
+    client: AsyncOpenAI = attrs.field(init=False)
+    llama_client: AsyncOpenAI = attrs.field(init=False)  # For Llama models with custom base URL
+
     # rate limit
     token_capacity: dict[str, Resource] = attrs.field(
         init=False, default=attrs.Factory(dict)
@@ -133,6 +137,20 @@ class OpenAIModel(ModelAPIProtocol):
     lock_consume: asyncio.Lock = attrs.field(
         init=False, default=attrs.Factory(asyncio.Lock)
     )
+
+    def __attrs_post_init__(self):
+        # Initialize AsyncOpenAI client with default base URL
+        self.client = AsyncOpenAI(
+            api_key=openai.api_key,
+            organization=self.organization if self.organization else None
+        )
+
+        # Initialize Llama client with custom base URL
+        llama_api_base = os.environ.get('LLAMA_API_BASE', 'https://api.hyperbolic.xyz/v1')
+        self.llama_client = AsyncOpenAI(
+            api_key=openai.api_key,
+            base_url=llama_api_base
+        )
 
     @staticmethod
     def _assert_valid_id(model_id: str):
@@ -221,17 +239,15 @@ class OpenAIModel(ModelAPIProtocol):
         kwargs = {
             key: value
             for key, value in kwargs.items()
-            if key not in ("save_path", "metadata")
+            if key not in ("save_path", "metadata", "api_base")  # Remove api_base from kwargs
         }
 
         start = time.time()
 
         async def attempt_api_call():
-            api_base_list = [os.environ['LLAMA_API_BASE']]
-            kwargs["api_base"] = random.choice(api_base_list)
             for model_id in cycle(model_ids):
                 return await asyncio.wait_for(
-                    self._make_api_call(prompt, model_id, start, **kwargs),
+                    self._make_api_call_llama(prompt, model_id, start, **kwargs),
                     timeout=100,  # cloudflare has a 100-second limit for a connection to remain open:  https://docs.runpod.io/pods/configuration/expose-ports
                 )
 
@@ -475,7 +491,11 @@ class OpenAIChatModel(OpenAIModel):
 
         api_start = time.time()
         prompt_ = [{"role": "user", "content": prompt}]
-        api_response: OpenAICompletion = await openai.ChatCompletion.acreate(messages=prompt_, model=model_id, **params)  # type: ignore
+        api_response = await self.client.chat.completions.create(
+            messages=prompt_,
+            model=model_id,
+            **params
+        )
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         context_token_cost, completion_token_cost = price_per_token(model_id)
@@ -486,12 +506,48 @@ class OpenAIChatModel(OpenAIModel):
                 model_id=model_id,
                 completion=choice.message.content
                 if "tools" not in params
-                else choice.message.tool_calls[0]["function"]["arguments"],
+                else choice.message.tool_calls[0].function.arguments,
                 stop_reason=choice.finish_reason,
                 api_duration=api_duration,
                 duration=duration,
                 cost=context_cost + completion_cost,
-                logprobs=self.convert_top_logprobs(choice.logprobs)
+                logprobs=self.convert_top_logprobs(choice.logprobs.model_dump())
+                if choice.logprobs is not None
+                else None,
+            )
+            for choice in api_response.choices
+        ]
+
+    async def _make_api_call_llama(
+        self, prompt: OAIChatPrompt, model_id, start_time, **params
+    ) -> list[LLMResponse]:
+        """Make API call for Llama chat models using custom base URL client."""
+        LOGGER.debug(f"Making {model_id} call (Llama Chat)")
+
+        if params.get("logprobs", None):
+            params["top_logprobs"] = params["logprobs"]
+            params["logprobs"] = True
+
+        api_start = time.time()
+        prompt_ = [{"role": "user", "content": prompt}]
+        api_response = await self.llama_client.chat.completions.create(
+            messages=prompt_,
+            model=model_id,
+            **params
+        )
+        api_duration = time.time() - api_start
+        duration = time.time() - start_time
+        return [
+            LLMResponse(
+                model_id=model_id,
+                completion=choice.message.content
+                if "tools" not in params
+                else choice.message.tool_calls[0].function.arguments,
+                stop_reason=choice.finish_reason,
+                api_duration=api_duration,
+                duration=duration,
+                cost=0,  # No cost for self-hosted Llama
+                logprobs=self.convert_top_logprobs(choice.logprobs.model_dump())
                 if choice.logprobs is not None
                 else None,
             )
@@ -566,7 +622,11 @@ class OpenAIBaseModel(OpenAIModel):
     ) -> list[LLMResponse]:
         LOGGER.debug(f"Making {model_id} call")
         api_start = time.time()
-        api_response: OpenAICompletion = await openai.Completion.acreate(prompt=prompt, model=model_id, **params)
+        api_response = await self.client.completions.create(
+            prompt=prompt,
+            model=model_id,
+            **params
+        )
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         if "gpt" not in model_id:
@@ -595,13 +655,41 @@ class OpenAIBaseModel(OpenAIModel):
                     api_duration=api_duration,
                     duration=duration,
                     cost=context_cost / len(api_response.choices)
-                    + count_tokens(choice.message.content) * completion_token_cost,
+                    + count_tokens(choice.text) * completion_token_cost,
                     logprobs=choice.logprobs.top_logprobs
                     if choice.logprobs is not None
                     else None,
                 )
                 for choice in api_response.choices
             ]
+
+    async def _make_api_call_llama(
+        self, prompt: OAIBasePrompt, model_id, start_time, **params
+    ) -> list[LLMResponse]:
+        """Make API call for Llama models using custom base URL client."""
+        LOGGER.debug(f"Making {model_id} call (Llama)")
+        api_start = time.time()
+        api_response = await self.llama_client.completions.create(
+            prompt=prompt,
+            model=model_id,
+            **params
+        )
+        api_duration = time.time() - api_start
+        duration = time.time() - start_time
+        return [
+            LLMResponse(
+                model_id=model_id,
+                completion=choice.text,
+                stop_reason=choice.finish_reason,
+                api_duration=api_duration,
+                duration=duration,
+                cost=0,
+                logprobs=choice.logprobs.top_logprobs
+                if choice.logprobs is not None
+                else None,
+            )
+            for choice in api_response.choices
+        ]
 
     @staticmethod
     def _print_prompt_and_response(prompt: OAIBasePrompt, responses: list[LLMResponse]):

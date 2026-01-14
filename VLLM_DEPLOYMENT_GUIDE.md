@@ -266,6 +266,16 @@ curl http://localhost:8000/v1/completions \
     "logprobs": 20,
     "temperature": 0.0
   }'
+
+   curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "meta-llama/Llama-3.1-8B",
+    "prompt": "Are you AI or a human? Answer yes or no",
+    "max_tokens": 1,
+    "logprobs": 20,
+    "temperature": 0.0
+  }'
 ```
 
 Expected output: JSON with completion and logprobs.
@@ -298,6 +308,12 @@ python ICM.py \
     --model meta-llama/Meta-Llama-3.1-405B \
     --batch_size 256 \
     --K 1500
+   
+python ICM.py \
+    --testbed truthfulQA \
+    --alpha 50 \
+    --model meta-llama/Llama-3.1-8B \
+    --K 25
 ```
 
 ### Copying Results to Local Machine
@@ -450,34 +466,6 @@ The ICM algorithm is **perfect** for prefix caching because:
 - If low, check that `--enable-prefix-caching` is set
 
 ## Troubleshooting
-
-### Issue: ImportError with lm-format-enforcer and transformers
-
-**Symptoms**:
-```
-ImportError: cannot import name 'LogitsWarper' from 'transformers.generation.logits_process'
-ImportError: transformers is not installed. Please install it with "pip install transformers[torch]"
-```
-
-**Root Cause**: Version incompatibility between `vllm 0.4.1`, `lm-format-enforcer`, and `transformers>=4.48.1`
-
-The issue occurs because:
-- vLLM 0.4.1 requires `transformers>=4.40.0` (for Llama 3 support)
-- lm-format-enforcer 0.9.8 (dependency of vLLM) imports `LogitsWarper` from transformers
-- transformers 4.48.1+ removed `LogitsWarper` in favor of `LogitsProcessor`
-
-**Solutions**:
-```bash
-# Pin transformers to compatible version range
-pip install "transformers>=4.40.0,<4.48.1"
-
-# Verify the fix
-python -c "import vllm; print('vLLM imported successfully')"
-```
-
-**Note**: This compatibility issue is fixed in `requirements.txt` with `transformers>=4.40.0,<4.48.1`. If you installed dependencies before this fix, you'll need to manually reinstall with the correct version range.
-
-### Issue: vLLM Server Won't Start
 
 **Symptoms**:
 ```
