@@ -61,7 +61,6 @@ echo "Port: $PORT"
 echo "Tensor Parallel Size: $TENSOR_PARALLEL_SIZE"
 echo "Max Model Length: $MAX_MODEL_LEN"
 echo "Max Sequences: $MAX_NUM_SEQS"
-echo "Max Batched Tokens: $MAX_NUM_BATCHED_TOKENS"
 echo "GPU Memory Utilization: $GPU_MEMORY_UTILIZATION"
 echo "========================================="
 echo ""
@@ -88,7 +87,6 @@ python -m vllm.entrypoints.openai.api_server \
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
     --enable-prefix-caching \
     --max-num-seqs "$MAX_NUM_SEQS" \
-    --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" \
     --disable-log-requests
 
 # Note: Prefix caching is critical for ICM performance
