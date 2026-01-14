@@ -3,7 +3,13 @@
 Test script to verify vLLM server is working correctly.
 
 Usage:
-    python scripts/test_vllm_server.py [--base-url http://localhost:8000]
+    python scripts/test_vllm_server.py [MODEL_SIZE] [--base-url http://localhost:8000]
+
+Examples:
+    python scripts/test_vllm_server.py 8
+    python scripts/test_vllm_server.py 70
+    python scripts/test_vllm_server.py 405
+    python scripts/test_vllm_server.py 8 --base-url http://remote-server:8000
 """
 
 import argparse
@@ -12,17 +18,55 @@ import json
 import sys
 
 
-def test_vllm_server(base_url="http://localhost:8000"):
+# Model size to model name mapping
+MODEL_NAMES = {
+    "8": "meta-llama/Llama-3.1-8B",
+    "8B": "meta-llama/Llama-3.1-8B",
+    "70": "meta-llama/Meta-Llama-3.1-70B",
+    "70B": "meta-llama/Meta-Llama-3.1-70B",
+    "405": "meta-llama/Meta-Llama-3.1-405B",
+    "405B": "meta-llama/Meta-Llama-3.1-405B",
+}
+
+
+def get_model_name(model_size):
+    """
+    Convert model size to full model name.
+
+    Args:
+        model_size: Model size (8, 70, or 405)
+
+    Returns:
+        Full model name
+    """
+    model_size_upper = model_size.upper()
+    if model_size_upper in MODEL_NAMES:
+        return MODEL_NAMES[model_size_upper]
+    elif model_size in MODEL_NAMES:
+        return MODEL_NAMES[model_size]
+    else:
+        raise ValueError(f"Invalid model size '{model_size}'. Valid options: 8, 70, 405")
+
+
+def test_vllm_server(base_url="http://localhost:8000", model_size="405"):
     """
     Test vLLM server with a simple completion request.
 
     Args:
         base_url: URL of vLLM server
+        model_size: Model size (8, 70, or 405)
 
     Returns:
         True if test passes, False otherwise
     """
+    try:
+        model_name = get_model_name(model_size)
+    except ValueError as e:
+        print(f"✗ {e}")
+        return False
+
     print(f"Testing vLLM server at {base_url}...")
+    print(f"Model: {model_name}")
     print("=" * 80)
 
     # Test basic completion
@@ -30,7 +74,7 @@ def test_vllm_server(base_url="http://localhost:8000"):
         response = requests.post(
             f"{base_url}/v1/completions",
             json={
-                "model": "meta-llama/Meta-Llama-3.1-405B",  # Adjust based on your deployment
+                "model": model_name,
                 "prompt": "Question: Is the sky blue?\nClaim: The sky is blue.\nI think this claim is ",
                 "max_tokens": 1,
                 "logprobs": 20,
@@ -81,7 +125,23 @@ def test_vllm_server(base_url="http://localhost:8000"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test vLLM server functionality")
+    parser = argparse.ArgumentParser(
+        description="Test vLLM server functionality",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scripts/test_vllm_server.py 8
+  python scripts/test_vllm_server.py 70
+  python scripts/test_vllm_server.py 405
+  python scripts/test_vllm_server.py 8 --base-url http://remote-server:8000
+        """
+    )
+    parser.add_argument(
+        "model_size",
+        nargs="?",
+        default="405",
+        help="Model size: 8, 70, or 405 (default: 405)"
+    )
     parser.add_argument(
         "--base-url",
         default="http://localhost:8000",
@@ -89,7 +149,7 @@ def main():
     )
     args = parser.parse_args()
 
-    success = test_vllm_server(args.base_url)
+    success = test_vllm_server(args.base_url, args.model_size)
     sys.exit(0 if success else 1)
 
 

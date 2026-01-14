@@ -243,10 +243,15 @@ vllm serve meta-llama/Meta-Llama-3.1-70B \
 ### Verify Server is Running
 
 ```bash
-# Test the server
-python scripts/test_vllm_server.py
+# Test the server (specify model size: 8, 70, or 405)
+python scripts/test_vllm_server.py 405    # For 405B model
+python scripts/test_vllm_server.py 70     # For 70B model
+python scripts/test_vllm_server.py 8      # For 8B model
 
-# Or manually
+# For remote server
+python scripts/test_vllm_server.py 8 --base-url http://remote-server:8000
+
+# Or manually with curl
 curl http://localhost:8000/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
