@@ -28,38 +28,6 @@ def in_notebook():
         return False
     return True
 
-def limit_concurrency_with_retry(model_api, use_vllm=False, retries=5):
-    """
-    Apply rate limiting only for external APIs, not for self-hosted vLLM.
-
-    Args:
-        model_api: The ModelAPI instance
-        use_vllm: Whether using vLLM (no rate limiting needed)
-        retries: Number of retries (unused, kept for compatibility)
-
-    Returns:
-        Wrapped model_api with or without rate limiting
-    """
-    if use_vllm:
-        # No rate limiting for self-hosted vLLM - unlimited throughput
-        async def unlimited_model_api(*args, **kwargs):
-            return await model_api(*args, **kwargs)
-        return unlimited_model_api
-    else:
-        # Apply rate limiting for external APIs
-        semaphore = asyncio.Semaphore(2)
-        rate_limiter = AsyncLimiter(
-            max_rate=100,   # requests
-            time_period=60  # per second
-        )
-
-        async def limited_model_api(*args, **kwargs):
-            async with rate_limiter:
-                async with semaphore:
-                    return await model_api(*args, **kwargs)
-
-        return limited_model_api
-
 class Task:
     def __init__(self, name, func, use_cache, dependencies=[]):
         self.name = name
@@ -134,10 +102,7 @@ class Pipeline:
                 self.config.print_prompt_and_response,
                 use_vllm=use_vllm,  # NEW: Pass vLLM flag to ModelAPI
             )
-            Pipeline._limited_model_api = limit_concurrency_with_retry(
-                Pipeline._model_api,
-                use_vllm=use_vllm,  # NEW: Conditional rate limiting
-            )
+  
             Pipeline._initialized = True
 
         self.file_sem = asyncio.BoundedSemaphore(self.config.num_open_files)
@@ -147,11 +112,6 @@ class Pipeline:
     def model_api(self):
         """Shared ModelAPI instance across all Pipeline instances."""
         return Pipeline._model_api
-
-    @property
-    def limited_model_api(self):
-        """Shared limited ModelAPI instance across all Pipeline instances."""
-        return Pipeline._limited_model_api
 
     def add_load_data_step(
         self, name, dataloader_fn, data_location, dependencies=[], use_cache=None

@@ -34,8 +34,6 @@ If you're deploying on a cloud GPU machine (Lambda Labs, RunPod, etc.), follow t
 - **70B model**: 300 GB minimum (not 140 GB - see note below)
 - **405B model**: 850 GB minimum
 
-**Important**: HuggingFace downloads include BOTH safetensors files AND original PyTorch checkpoints, roughly doubling the advertised model size. For example, Llama-3.1-70B is advertised as 140 GB but actually requires ~285 GB (144 GB safetensors + 141 GB original/*.pth files).
-
 
 ### 1. SSH into Remote Machine
 
@@ -76,18 +74,6 @@ conda activate ue
 # Install the project as an editable package
 # This installs all dependencies AND makes the code importable
 pip install -e .
-
-# Fix compatibility issues with vLLM
-pip uninstall -y numpy
-pip install "numpy<2"
-pip install "transformers>=4.40.0,<4.48.1"
-
-# What this does:
-# - Reads requirements.txt and installs all dependencies (vllm, huggingface-hub, etc.)
-# - Installs your project as a package (enables: from core.llm_api import ModelAPI)
-# - Creates editable install (code changes immediately reflected)
-# - Downgrades numpy (vLLM incompatible with numpy 2.x)
-# - Pins transformers to 4.40.0-4.48.0 (vLLM 0.4.1 requires >=4.40.0, but lm-format-enforcer breaks with >=4.48.1)
 ```
 
 **Alternative (simpler but less robust):**

@@ -325,7 +325,6 @@ async def predict_assignment_zero_shot(model, example):
     # Create zero-shot prompt
     prompt = get_judge_prompt_zeroshot(example, pipeline=False)
 
-    # Make direct API call to vLLM (single prompt, not batched)
     response = await model_api(
         model,
         prompt,

@@ -517,7 +517,8 @@ BASE_MODELS = {
     "meta-llama/Llama-3.1-8B",
     "meta-llama/Llama-3.1-70B",
     "meta-llama/Meta-Llama-3.1-405B",
-    "meta-llama/Meta-Llama-3.1-70B"
+    "meta-llama/Meta-Llama-3.1-70B",
+    "meta-llama/Meta-Llama-3.1-8B"
 }
 
 
