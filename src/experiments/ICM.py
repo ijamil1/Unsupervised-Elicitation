@@ -226,7 +226,7 @@ def get_pipeline_batched(
     )
 
     # NEW: Batched inference step replaces add_query_step
-    async def batched_inference_step(train_data, use_cache, index):
+    async def batched_inference_step(train_data):
         """
         Custom transformation step that performs batched inference.
 
