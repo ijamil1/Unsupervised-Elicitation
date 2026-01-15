@@ -526,12 +526,18 @@ class OpenAIChatModel(OpenAIModel):
         """Make API call for Llama chat models using custom base URL client."""
         LOGGER.debug(f"Making {model_id} call (Llama Chat)")
         print(f"Making {model_id} call (Llama Chat) in OpenAIChatModel")
-        if params.get("logprobs", None):
-            params["top_logprobs"] = params["logprobs"]
+        # Handle logprobs parameters for chat completions API
+        if params.get("logprobs") or params.get("top_logprobs"):
+            # If top_logprobs is provided, use it; otherwise default to 5
+            params["top_logprobs"] = 5
             params["logprobs"] = True
 
         api_start = time.time()
         prompt_ = [{"role": "user", "content": prompt}]
+
+        print(prompt_)
+        print(params)
+        print('\n')
         api_response = await self.llama_client.chat.completions.create(
             messages=prompt_,
             model=model_id,
