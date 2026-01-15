@@ -479,7 +479,6 @@ def initialize(train, fewshot_ids, args):
         
     return demonstrations, unlabeled_ids, whole_ids, seed_ids
 
-
 async def icm_main(args):
     train, fewshot_ids = load_train_data(args)
 
@@ -620,12 +619,22 @@ async def zero_shot_chat_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+
+    # Determine instruct model based on args.model size
+    model_size = args.model.split('-')[-1]
+    model_size_to_instruct = {
+        '8B': 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+        '70B': 'meta-llama/Meta-Llama-3.1-70B-Instruct',
+        '405B': 'meta-llama/Meta-Llama-3.1-405B-Instruct',
+    }
+    instruct_model = model_size_to_instruct.get(model_size, 'meta-llama/Meta-Llama-3.1-70B-Instruct')
+
     for idx, i in enumerate(test):
         new_label = await predict_assignment_zero_shot(
-                "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                instruct_model,
                 i
             )
-        
+
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
@@ -708,7 +717,15 @@ def plot_test_accuracies(icm_test_accuracy, golden_supervision_test_accuracy, ze
 
 async def async_main():
     setup_environment(logger_level="error")
-    args = get_args()  
+    args = get_args()
+
+    valid_models = [
+        'meta-llama/Llama-3.1-405B',
+        'meta-llama/Llama-3.1-70B',
+        'meta-llama/Llama-3.1-8B',
+    ]
+    assert args.model in valid_models, f"args.model must be one of {valid_models}, got {args.model}"
+
     print("task: ", args.testbed)
     random.seed(args.seed)
 
