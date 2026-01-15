@@ -321,6 +321,9 @@ _GPT_4_MODELS = [
     "meta-llama/Meta-Llama-3.1-8B-Instruct",
     "meta-llama/Meta-Llama-3.1-70B-Instruct",
     "meta-llama/Meta-Llama-3.1-405B-Instruct",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+    "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+    "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
     "qwen/qwen-2.5-7b-instruct",
     "openai/gpt-4o",
     "openchat/openchat-7b",
@@ -392,7 +395,6 @@ class OpenAIChatModel(OpenAIModel):
     ) -> list[LLMResponse]:
         """Make API call for Llama chat models using custom base URL client."""
         LOGGER.debug(f"Making {model_id} call (Llama Chat)")
-        print(f"Making {model_id} call (Llama Chat) in OpenAIChatModel")
         
         api_start = time.time()
         prompt_ = [{"role": "user", "content": prompt}]

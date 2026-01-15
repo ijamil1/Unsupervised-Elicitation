@@ -498,18 +498,6 @@ RuntimeError: CUDA out of memory
 3. Use faster network connection (10GbE recommended for remote)
 4. Check that vLLM version is latest
 
-### Issue: Logprobs Format Error
-
-**Symptoms**:
-```
-KeyError: 'top_logprobs'
-```
-
-**Solutions**:
-1. Verify vLLM version: `pip show vllm` (need v0.3.0+)
-2. Check that `logprobs=20` is passed in request
-3. Update vLLM: `pip install --upgrade vllm`
-
 ### Issue: Different Results vs External API
 
 **Symptoms**: ICM convergence differs from baseline

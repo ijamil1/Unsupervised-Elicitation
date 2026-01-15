@@ -22,22 +22,23 @@ case $MODEL_SIZE in
   405B)
     MODEL_NAME="meta-llama/Llama-3.1-405B"
     TENSOR_PARALLEL_SIZE=8  # 8× A100 80GB or H100
-    MAX_MODEL_LEN=15000
+    MAX_MODEL_LEN=10500
     MAX_NUM_SEQS=256
     echo "Launching Llama-3.1-405B (requires 8× A100 80GB or H100 GPUs)"
     ;;
   70B)
     MODEL_NAME="meta-llama/Llama-3.1-70B"
     TENSOR_PARALLEL_SIZE=4  # 4× A40 or 2× A100 80GB
-    MAX_MODEL_LEN=15000
+    MAX_MODEL_LEN=10500
     MAX_NUM_SEQS=256
     echo "Launching Llama-3.1-70B (requires 4× A40 or 2× A100 80GB GPUs)"
     ;;
   8B)
     MODEL_NAME="meta-llama/Llama-3.1-8B"
     TENSOR_PARALLEL_SIZE=1  # 1× A100 40GB or A6000
-    MAX_MODEL_LEN=15000
-    MAX_NUM_SEQS=256
+    MAX_MODEL_LEN=10500
+    MAX_NUM_SEQS=20
+    MAX_NUM_BATCHED_TOKENS=160000
     echo "Launching Llama-3.1-8B (requires 1× A100 40GB or A6000 GPU)"
     ;;
   *)
@@ -61,6 +62,7 @@ echo "Port: $PORT"
 echo "Tensor Parallel Size: $TENSOR_PARALLEL_SIZE"
 echo "Max Model Length: $MAX_MODEL_LEN"
 echo "Max Sequences: $MAX_NUM_SEQS"
+echo "Max Num Batched Tokens: $MAX_NUM_BATCHED_TOKENS"
 echo "GPU Memory Utilization: $GPU_MEMORY_UTILIZATION"
 echo "========================================="
 echo ""
@@ -87,6 +89,7 @@ python -m vllm.entrypoints.openai.api_server \
     --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
     --enable-prefix-caching \
     --max-num-seqs "$MAX_NUM_SEQS" \
+    --max_num_batched_tokens "$MAX_NUM_BATCHED_TOKENS" \
     --disable-log-requests
 
 # Note: Prefix caching is critical for ICM performance
