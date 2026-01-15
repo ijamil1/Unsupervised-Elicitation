@@ -121,7 +121,6 @@ class OpenAIModel(ModelAPIProtocol):
     model_ids: set[str] = attrs.field(init=False, default=attrs.Factory(set))
 
     # OpenAI clients (v2.x API)
-    client: AsyncOpenAI = attrs.field(init=False)
     llama_client: AsyncOpenAI = attrs.field(init=False)  # For Llama models with custom base URL
 
     # rate limit
@@ -139,14 +138,8 @@ class OpenAIModel(ModelAPIProtocol):
     )
 
     def __attrs_post_init__(self):
-        # Initialize AsyncOpenAI client with default base URL
-        self.client = AsyncOpenAI(
-            api_key=openai.api_key,
-            organization=self.organization if self.organization else None
-        )
-
         # Initialize Llama client with custom base URL
-        llama_api_base = os.environ.get('LLAMA_API_BASE', 'https://api.hyperbolic.xyz/v1')
+        llama_api_base = os.environ.get('NEW_LLAMA_API_BASE', 'https://api.hyperbolic.xyz/v1')
         self.llama_client = AsyncOpenAI(
             api_key=openai.api_key,
             base_url=llama_api_base
@@ -162,9 +155,6 @@ class OpenAIModel(ModelAPIProtocol):
 
     @staticmethod
     def _count_prompt_token_capacity(prompt, **kwargs) -> int:
-        raise NotImplementedError
-
-    async def _make_api_call(self, prompt, model_id, **params) -> list[LLMResponse]:
         raise NotImplementedError
 
     @staticmethod
@@ -260,7 +250,6 @@ class OpenAIModel(ModelAPIProtocol):
         responses: Optional[list[LLMResponse]] = None
         for i in range(max_attempts):
             try:
-                print('calling _make_api_call_llama in __llama_call__ method of OpenAIModel')
                 responses = await attempt_api_call()
             except Exception as e:
                 error_info = f"Exception Type: {type(e).__name__}, Error Details: {str(e)}, Traceback: {format_exc()}"
@@ -298,76 +287,6 @@ class OpenAIModel(ModelAPIProtocol):
             return await self.__llama_call__(
                 model_ids, prompt, print_prompt_and_response, max_attempts, **kwargs
             )
-        kwargs = {
-            key: value
-            for key, value in kwargs.items()
-            if key not in ("save_path", "metadata")
-        }
-        start = time.time()
-
-        async def attempt_api_call():
-            for model_id in cycle(model_ids):
-                async with self.lock_consume:
-                    request_capacity, token_capacity = (
-                        self.request_capacity[model_id],
-                        self.token_capacity[model_id],
-                    )
-                    if request_capacity.geq(1) and token_capacity.geq(token_count):
-                        request_capacity.consume(1)
-                        token_capacity.consume(token_count)
-                    else:
-                        await asyncio.sleep(0.01)
-                        continue  # Skip this iteration if the condition isn't met
-
-                # Make the API call outside the lock
-                return await asyncio.wait_for(
-                    self._make_api_call(prompt, model_id, start, **kwargs), timeout=120
-                )
-
-        model_ids.sort(
-            key=lambda model_id: price_per_token(model_id)[0]
-        )  # Default to cheapest model
-        async with self.lock_add:
-            for model_id in model_ids:
-                await self.add_model_id(model_id)
-        if "tool" in prompt[0]:
-            kwargs["tools"] = prompt[0]["tool"]
-        if "response_format" in prompt[0]:
-            kwargs['response_format'] = prompt[0]['response_format']
-        prompt = self._process_prompt(prompt)
-
-        token_count = self._count_prompt_token_capacity(prompt, **kwargs)
-        assert (
-            max(self.token_capacity[model_id].refresh_rate for model_id in model_ids)
-            >= token_count
-        ), "Prompt is too long for any model to handle."
-        # prompt_file = self._create_prompt_history_file(prompt)
-        responses: Optional[list[LLMResponse]] = None
-        for i in range(max_attempts):
-            try:
-                responses = await attempt_api_call()
-            except Exception as e:
-                error_info = f"Exception Type: {type(e).__name__}, Error Details: {str(e)}, Traceback: {format_exc()}"
-                LOGGER.warn(
-                    f"Encountered API error: {error_info}.\nRetrying now. (Attempt {i})"
-                )
-                await asyncio.sleep(1.5**i)
-            else:
-                break
-
-        if responses is None:
-            raise RuntimeError(
-                f"Failed to get a response from the API after {max_attempts} attempts."
-            )
-
-        if self.print_prompt_and_response or print_prompt_and_response:
-            self._print_prompt_and_response(prompt, responses)
-
-        end = time.time()
-        LOGGER.debug(f"Completed call to {model_id} in {end - start}s.")
-        return [
-            {"prompt": prompt, "response": response.to_dict()} for response in responses
-        ]
 
 
 _GPT_4_MODELS = [
@@ -468,82 +387,22 @@ class OpenAIChatModel(OpenAIModel):
             + kwargs.get("n", 1) * kwargs.get("max_tokens", 15),
         )
 
-    def convert_top_logprobs(self, data):
-        # Initialize the new structure with only top_logprobs
-        top_logprobs = []
-
-        for item in data["content"]:
-            # Prepare a dictionary for top_logprobs
-            top_logprob_dict = {}
-            for top_logprob in item["top_logprobs"]:
-                top_logprob_dict[top_logprob["token"]] = top_logprob["logprob"]
-
-            top_logprobs.append(top_logprob_dict)
-
-        return top_logprobs
-
-    async def _make_api_call(
-        self, prompt: OAIChatPrompt, model_id, start_time, **params
-    ) -> list[LLMResponse]:
-        LOGGER.debug(f"Making {model_id} call")
-
-        if params.get("logprobs", None):
-            params["top_logprobs"] = params["logprobs"]
-            params["logprobs"] = True
-
-        api_start = time.time()
-        prompt_ = [{"role": "user", "content": prompt}]
-        api_response = await self.client.chat.completions.create(
-            messages=prompt_,
-            model=model_id,
-            **params
-        )
-        api_duration = time.time() - api_start
-        duration = time.time() - start_time
-        context_token_cost, completion_token_cost = price_per_token(model_id)
-        context_cost = api_response.usage.prompt_tokens * context_token_cost
-        completion_cost = api_response.usage.completion_tokens * completion_token_cost
-        return [
-            LLMResponse(
-                model_id=model_id,
-                completion=choice.message.content
-                if "tools" not in params
-                else choice.message.tool_calls[0].function.arguments,
-                stop_reason=choice.finish_reason,
-                api_duration=api_duration,
-                duration=duration,
-                cost=context_cost + completion_cost,
-                logprobs=self.convert_top_logprobs(choice.logprobs.model_dump())
-                if choice.logprobs is not None
-                else None,
-            )
-            for choice in api_response.choices
-        ]
-
     async def _make_api_call_llama(
         self, prompt: OAIChatPrompt, model_id, start_time, **params
     ) -> list[LLMResponse]:
         """Make API call for Llama chat models using custom base URL client."""
         LOGGER.debug(f"Making {model_id} call (Llama Chat)")
         print(f"Making {model_id} call (Llama Chat) in OpenAIChatModel")
-        # Handle logprobs parameters for chat completions API
-        if params.get("logprobs") or params.get("top_logprobs"):
-            # If top_logprobs is provided, use it; otherwise default to 5
-            params["top_logprobs"] = 5
-            params["logprobs"] = True
-
+        
         api_start = time.time()
         prompt_ = [{"role": "user", "content": prompt}]
 
-        print(prompt_)
-        print(params)
-        print('\n')
         api_response = await self.llama_client.chat.completions.create(
             messages=prompt_,
             model=model_id,
             **params
         )
-        print('API response from calling Llama chat model via Hyperbolic API endpoint', api_response)
+
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         return [
@@ -556,7 +415,7 @@ class OpenAIChatModel(OpenAIModel):
                 api_duration=api_duration,
                 duration=duration,
                 cost=0,  # No cost for self-hosted Llama
-                logprobs=self.convert_top_logprobs(choice.logprobs.model_dump())
+                logprobs=choice.logprobs.top_logprobs
                 if choice.logprobs is not None
                 else None,
             )
@@ -586,146 +445,5 @@ BASE_MODELS = {
     "meta-llama/Meta-Llama-3.1-8B"
 }
 
-
-class OpenAIBaseModel(OpenAIModel):
-    def _process_prompt(
-        self, prompt: Union[OAIBasePrompt, OAIChatPrompt]
-    ) -> OAIBasePrompt:
-        if isinstance(prompt, list) and isinstance(prompt[0], dict):
-            return messages_to_single_prompt(prompt)
-        return prompt
-
-    def _assert_valid_id(self, model_id: str):
-        assert model_id in BASE_MODELS, f"Invalid model id: {model_id}"
-
-    @retry(stop=stop_after_attempt(8), wait=wait_fixed(2))
-    async def _get_dummy_response_header(self, model_id: str):
-        url = "https://api.openai.com/v1/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {openai.api_key}",
-            "OpenAI-Organization": self.organization,
-        }
-        data = {"model": model_id, "prompt": "a", "max_tokens": 1}
-        response = requests.post(url, headers=headers, json=data)
-        if "gpt" in model_id and "x-ratelimit-limit-tokens" not in response.headers:
-            raise RuntimeError("Failed to get dummy response header")
-        return response.headers
-
-    @staticmethod
-    def _count_prompt_token_capacity(prompt: OAIBasePrompt, **kwargs) -> int:
-        max_tokens = kwargs.get("max_tokens", 15)
-        n = kwargs.get("n", 1)
-        completion_tokens = n * max_tokens
-
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        if isinstance(prompt, str):
-            prompt_tokens = len(tokenizer.encode(prompt))
-            return prompt_tokens + completion_tokens
-        else:
-            prompt_tokens = sum(len(tokenizer.encode(p)) for p in prompt)
-            return prompt_tokens + completion_tokens
-
-    async def _make_api_call(
-        self, prompt: OAIBasePrompt, model_id, start_time, **params
-    ) -> list[LLMResponse]:
-        LOGGER.debug(f"Making {model_id} call")
-        api_start = time.time()
-        api_response = await self.client.completions.create(
-            prompt=prompt,
-            model=model_id,
-            **params
-        )
-        api_duration = time.time() - api_start
-        duration = time.time() - start_time
-        if "gpt" not in model_id:
-            return [
-                LLMResponse(
-                    model_id=model_id,
-                    completion=choice.text,
-                    stop_reason=choice.finish_reason,
-                    api_duration=api_duration,
-                    duration=duration,
-                    cost=0,
-                    logprobs=choice.logprobs.top_logprobs
-                    if choice.logprobs is not None
-                    else None,
-                )
-                for choice in api_response.choices
-            ]
-        else:
-            context_token_cost, completion_token_cost = price_per_token(model_id)
-            context_cost = api_response.usage.prompt_tokens * context_token_cost
-            return [
-                LLMResponse(
-                    model_id=model_id,
-                    completion=choice.text,
-                    stop_reason=choice.finish_reason,
-                    api_duration=api_duration,
-                    duration=duration,
-                    cost=context_cost / len(api_response.choices)
-                    + count_tokens(choice.text) * completion_token_cost,
-                    logprobs=choice.logprobs.top_logprobs
-                    if choice.logprobs is not None
-                    else None,
-                )
-                for choice in api_response.choices
-            ]
-
-    async def _make_api_call_llama(
-        self, prompt: OAIBasePrompt, model_id, start_time, **params
-    ) -> list[LLMResponse]:
-        """Make API call for Llama models using custom base URL client."""
-        LOGGER.debug(f"Making {model_id} call (Llama)")
-        api_start = time.time()
-        api_response = await self.llama_client.completions.create(
-            prompt=prompt,
-            model=model_id,
-            **params
-        )
-        api_duration = time.time() - api_start
-        duration = time.time() - start_time
-        return [
-            LLMResponse(
-                model_id=model_id,
-                completion=choice.text,
-                stop_reason=choice.finish_reason,
-                api_duration=api_duration,
-                duration=duration,
-                cost=0,
-                logprobs=choice.logprobs.top_logprobs
-                if choice.logprobs is not None
-                else None,
-            )
-            for choice in api_response.choices
-        ]
-
-    @staticmethod
-    def _print_prompt_and_response(prompt: OAIBasePrompt, responses: list[LLMResponse]):
-        prompt_list = prompt if isinstance(prompt, list) else [prompt]
-        responses_per_prompt = len(responses) // len(prompt_list)
-        responses_list = [
-            responses[i : i + responses_per_prompt]
-            for i in range(0, len(responses), responses_per_prompt)
-        ]
-        for i, (prompt, response_list) in enumerate(zip(prompt_list, responses_list)):
-            if len(prompt_list) > 1:
-                cprint(f"==PROMPT {i + 1}", "white")
-            if len(response_list) == 1:
-                cprint(f"=={response_list[0].model_id}", "white")
-                cprint(prompt, PRINT_COLORS["user"], end="")
-                cprint(
-                    response_list[0].completion,
-                    PRINT_COLORS["assistant"],
-                    attrs=["bold"],
-                )
-            else:
-                cprint(prompt, PRINT_COLORS["user"])
-                for j, response in enumerate(response_list):
-                    cprint(f"==RESPONSE {j + 1} ({response.model_id}):", "white")
-                    cprint(
-                        response.completion, PRINT_COLORS["assistant"], attrs=["bold"]
-                    )
-            print()
 
 

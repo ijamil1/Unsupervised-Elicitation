@@ -9,14 +9,10 @@ from typing import Callable, Literal, Optional, Union
 
 import attrs
 
-from core.llm_api.anthropic_llm import ANTHROPIC_MODELS, AnthropicChatModel
 from core.llm_api.base_llm import LLMResponse, ModelAPIProtocol
 from core.llm_api.openai_llm import (
     BASE_MODELS,
     GPT_CHAT_MODELS,
-    OAIBasePrompt,
-    OAIChatPrompt,
-    OpenAIBaseModel,
     OpenAIChatModel,
 )
 from core.llm_api.vllm_llm import VLLMClient
@@ -36,7 +32,6 @@ class ModelAPI:
     use_vllm: bool = True  # NEW: Flag to enable vLLM (default: True)
     vllm_base_url: str = None  # NEW: vLLM server URL (defaults to VLLM_BASE_URL from SECRETS)
 
-    _openai_base: OpenAIBaseModel = attrs.field(init=False)
     _openai_chat: OpenAIChatModel = attrs.field(init=False)
     _vllm_client: VLLMClient = attrs.field(init=False)  # NEW: vLLM client
 
@@ -49,12 +44,7 @@ class ModelAPI:
         if self.organization is None:
             self.organization = "NYU_ORG"
 
-        # Initialize OpenAI clients (keep for fallback or chat models)
-        self._openai_base = OpenAIBaseModel(
-            frac_rate_limit=self.openai_fraction_rate_limit,
-            organization=secrets[self.organization],
-            print_prompt_and_response=self.print_prompt_and_response,
-        )
+
         self._openai_chat = OpenAIChatModel(
             frac_rate_limit=self.openai_fraction_rate_limit,
             organization=secrets[self.organization],
@@ -161,17 +151,8 @@ class ModelAPI:
             # NEW: Route base models to vLLM if enabled
             if self.use_vllm and model_id in BASE_MODELS:
                 return self._vllm_client
-
-            if model_id in ["gpt-4-base", "gpt-3.5-turbo-instruct"]:
-                return (
-                    self._openai_base_arg
-                )  # NYU ARG is only org with access to this model
-            elif model_id in BASE_MODELS:
-                return self._openai_base
             elif model_id in GPT_CHAT_MODELS or "ft:gpt-3.5-turbo" in model_id:
                 return self._openai_chat
-            elif model_id in ANTHROPIC_MODELS:
-                return self._anthropic_chat
             raise ValueError(f"Invalid model id: {model_id}")
 
         model_classes = [model_id_to_class(model_id) for model_id in model_ids]
@@ -183,13 +164,9 @@ class ModelAPI:
             kwargs.get("max_tokens") if kwargs.get("max_tokens") is not None else 2000
         )
         model_class = model_classes[0]
-        if isinstance(model_class, AnthropicChatModel):
-            kwargs["max_tokens_to_sample"] = max_tokens
-        else:
-            kwargs["max_tokens"] = max_tokens
-        # Check if current prompt has already been saved in the save file
-        # If so, directly return previous result
-        num_candidates = num_candidates_per_completion * n
+      
+        kwargs["max_tokens"] = max_tokens
+        num_candidates = 1
         
         responses = await model_class(
             model_ids,
@@ -222,63 +199,3 @@ class ModelAPI:
 
     def reset_cost(self):
         self.running_cost = 0
-
-
-async def demo():
-    model_api = ModelAPI(anthropic_num_threads=2, openai_fraction_rate_limit=0.99)
-    anthropic_requests = [
-        model_api(
-            "claude-3-5-sonnet-20240620",
-            [
-                {"role": "system", "content": "You are Claude."},
-                {"role": "user", "content": "who are you!"},
-            ],
-            max_tokens=20,
-            print_prompt_and_response=False,
-        )
-    ]
-    oai_chat_messages = [
-        [
-            {"role": "system", "content": "You are gpt-3.5-turbo."},
-            {"role": "user", "content": "who are you!"},
-        ],
-        [
-            {
-                "role": "system",
-                "content": "You are gpt-4",
-            },
-            {"role": "user", "content": "who are you!"},
-        ],
-    ]
-    oai_chat_models = ["gpt-3.5-turbo-16k"]
-    oai_chat_requests = [
-        model_api(
-            oai_chat_models,
-            prompt=message,
-            max_tokens=16_000,
-            n=1,
-            print_prompt_and_response=False,
-        )
-        for message in oai_chat_messages
-    ]
-    answer = await asyncio.gather(*anthropic_requests, *oai_chat_requests)
-
-    for responses in answer:
-        for i in responses:
-            print(i.completion)
-            print("=" * 100)
-
-    costs = defaultdict(int)
-    for responses in answer:
-        for response in responses:
-            costs[response.model_id] += response.cost
-
-    print("-" * 80)
-    print("Costs:")
-    for model_id, cost in costs.items():
-        print(f"{model_id}: ${cost}")
-    return answer
-
-
-if __name__ == "__main__":
-    asyncio.run(demo())

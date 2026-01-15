@@ -15,22 +15,16 @@ from core.llm_api.llm import ModelAPI
 from core.utils import setup_environment
 
 from src.model_querying.prompt_creation import (
-    get_decision_prompt,
     get_judge_prompt_fewshot,
     get_judge_prompt_zeroshot
 )
 from src.model_querying.solution_extraction import (
-    extract_claim_logprobs,
-    extract_decision_logprobs,
-    get_yes_no_diff_logprobs,
+get_yes_no_diff_logprobs
 )
 from src.pipeline.pipeline import Pipeline, PipelineConfig
 from src.tools.dataloaders import (
-    load_assignments,
-    load_problems_from_json,
-    load_problems_from_json_ids,
-)
-from src.tools.path_utils import get_default_results_directory, get_root_directory
+    load_assignments)
+from src.tools.path_utils import get_root_directory
 
 
 def calculate_accuracy(train_data):
@@ -332,8 +326,7 @@ async def predict_assignment_zero_shot(model, example):
     response = await model_api(
         model,
         prompt,
-        logprobs=True,
-        top_logprobs=20,
+        logprobs=5,
         temperature=0.0,
         max_tokens=1,
     )
@@ -623,11 +616,11 @@ async def zero_shot_chat_main(args):
     # Determine instruct model based on args.model size
     model_size = args.model.split('-')[-1]
     model_size_to_instruct = {
-        '8B': 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-        '70B': 'meta-llama/Meta-Llama-3.1-70B-Instruct',
-        '405B': 'meta-llama/Meta-Llama-3.1-405B-Instruct',
+        '8B': 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+        '70B': 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
+        '405B': 'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo',
     }
-    instruct_model = model_size_to_instruct.get(model_size, 'meta-llama/Meta-Llama-3.1-70B-Instruct')
+    instruct_model = model_size_to_instruct.get(model_size, 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo')
 
     for idx, i in enumerate(test):
         new_label = await predict_assignment_zero_shot(

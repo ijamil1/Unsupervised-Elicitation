@@ -80,7 +80,7 @@ def load_secrets(
     file_path=SECRETS_FILE_PATH,
     anthropic_tag: str = "ANTHROPIC_API_KEY",
     logger_level: str = "info",
-    openai_tag: str = "API_KEY",
+    openai_tag: str = "TOGETHER_API_KEY",
     mistral_tag: str = "MISTRAL_API_KEY",
     replicate_tag: str = "REPLICATE_API_KEY",
     organization: str = None,
@@ -93,6 +93,7 @@ def load_secrets(
 
     openai.api_key = secrets[openai_tag]
     os.environ['LLAMA_API_BASE'] = secrets['LLAMA_API_BASE']
+    os.environ['NEW_LLAMA_API_BASE'] = secrets['NEW_LLAMA_API_BASE']
     os.environ['VLLM_BASE_URL'] = secrets.get('VLLM_BASE_URL', 'http://localhost:8000')  # NEW: Load vLLM URL
 
     if organization is not None:
