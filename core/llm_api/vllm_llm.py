@@ -131,7 +131,6 @@ class VLLMClient(ModelAPIProtocol):
             "logprobs": kwargs.get("top_logprobs", 20),  # vLLM uses 'logprobs' for top-k
             "echo": False,
         }
-
         LOGGER.debug(f"Making vLLM request with {len(prompts)} prompts")
 
         # Make async HTTP request

@@ -189,46 +189,17 @@ class ModelAPI:
             kwargs["max_tokens"] = max_tokens
         # Check if current prompt has already been saved in the save file
         # If so, directly return previous result
-        responses = None
-        #if use_cache and kwargs.get("save_path") is not None:
-        #    try:
-        #        responses = self._load_from_cache(kwargs.get("save_path"))
-        #    except:
-        #        logging.error(f"invalid cache data: {kwargs.get('save_path')}")
-
-        # After loading cache, we do not directly return previous results,
-        # but continue running it through parse_fn and re-save it.
-        # This is because we may frequently update the parse_fn during development
-        if responses is None:
-            num_candidates = num_candidates_per_completion * n
-            if isinstance(model_class, AnthropicChatModel):
-                responses = list(
-                    chain.from_iterable(
-                        await asyncio.gather(
-                            *[
-                                model_class(
-                                    model_ids,
-                                    prompt,
-                                    print_prompt_and_response,
-                                    max_attempts_per_api_call,
-                                    **kwargs,
-                                )
-                                for _ in range(num_candidates)
-                            ]
-                        )
-                    )
-                )
-            else:
-                responses = await model_class(
-                    model_ids,
-                    prompt,
-                    print_prompt_and_response,
-                    max_attempts_per_api_call,
-                    n=num_candidates,
-                    **kwargs,
-                )
+        num_candidates = num_candidates_per_completion * n
+        
+        responses = await model_class(
+            model_ids,
+            prompt,
+            print_prompt_and_response,
+            max_attempts_per_api_call,
+            n=num_candidates,
+            **kwargs,
+        )
          
-
         modified_responses = []
         for response in responses:
             self.running_cost += response["response"]["cost"]
@@ -247,15 +218,7 @@ class ModelAPI:
             )
             modified_responses.append(response)
 
-        #if kwargs.get("save_path") is not None:
-        #    if file_sem is not None:
-        #        async with file_sem:
-        #            with open(kwargs.get("save_path"), "w") as f:
-        #                json.dump(modified_responses, f, indent=2)
-        #    else:
-        #        with open(kwargs.get("save_path"), "w") as f:
-        #            json.dump(modified_responses, f, indent=2)
-        return modified_responses[:n]
+        return modified_responses
 
     def reset_cost(self):
         self.running_cost = 0

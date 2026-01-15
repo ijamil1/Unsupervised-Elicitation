@@ -20,7 +20,7 @@ MODEL_SIZE=${1:-405B}
 # Configuration based on model size
 case $MODEL_SIZE in
   405B)
-    MODEL_NAME="meta-llama/Meta-Llama-3.1-405B"
+    MODEL_NAME="meta-llama/Llama-3.1-405B"
     TENSOR_PARALLEL_SIZE=8  # 8× A100 80GB or H100
     MAX_MODEL_LEN=15000
     MAX_NUM_SEQS=256

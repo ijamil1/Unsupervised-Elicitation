@@ -260,6 +260,7 @@ class OpenAIModel(ModelAPIProtocol):
         responses: Optional[list[LLMResponse]] = None
         for i in range(max_attempts):
             try:
+                print('calling _make_api_call_llama in __llama_call__ method of OpenAIModel')
                 responses = await attempt_api_call()
             except Exception as e:
                 error_info = f"Exception Type: {type(e).__name__}, Error Details: {str(e)}, Traceback: {format_exc()}"
@@ -398,6 +399,7 @@ _GPT_4_MODELS = [
     "meta-llama/llama-2-70b-chat",
     "meta-llama/llama-3.1-8b-instruct",
     "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct",
     "meta-llama/Meta-Llama-3.1-70B-Instruct",
     "meta-llama/Meta-Llama-3.1-405B-Instruct",
     "qwen/qwen-2.5-7b-instruct",
@@ -523,7 +525,7 @@ class OpenAIChatModel(OpenAIModel):
     ) -> list[LLMResponse]:
         """Make API call for Llama chat models using custom base URL client."""
         LOGGER.debug(f"Making {model_id} call (Llama Chat)")
-
+        print(f"Making {model_id} call (Llama Chat) in OpenAIChatModel")
         if params.get("logprobs", None):
             params["top_logprobs"] = params["logprobs"]
             params["logprobs"] = True
@@ -535,6 +537,7 @@ class OpenAIChatModel(OpenAIModel):
             model=model_id,
             **params
         )
+        print('API response from calling Llama chat model via Hyperbolic API endpoint', api_response)
         api_duration = time.time() - api_start
         duration = time.time() - start_time
         return [
