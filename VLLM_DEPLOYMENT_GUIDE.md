@@ -300,26 +300,71 @@ VLLM_BASE_URL=http://localhost:8000
 ```
 
 
-## Running ICM with vLLM
+## Running ICM with vLLM In-Process
 
-### Basic Usage
+In-process mode eliminates network overhead by loading the model directly in the same Python process. This is the **recommended** approach when running on a machine with GPUs.
 
 ```bash
 cd src/experiments
 
+# Basic in-process run with 8B model (1 GPU)
 python ICM.py \
+    --model meta-llama/Llama-3.1-8B \
     --testbed truthfulQA \
-    --alpha 50 \
-    --model meta-llama/Meta-Llama-3.1-405B \
+    --vllm_mode inprocess \
+    --tensor_parallel_size 1 \
+    --gpu_memory_utilization 0.90 \
+    --K 100
+
+# 70B model with 4 GPUs
+python ICM.py \
+    --model meta-llama/Meta-Llama-3.1-70B \
+    --testbed truthfulQA \
+    --vllm_mode inprocess \
+    --tensor_parallel_size 4 \
+    --gpu_memory_utilization 0.90 \
     --batch_size 256 \
     --K 1500
-   
+
+# 405B model with 8 GPUs
 python ICM.py \
+    --model meta-llama/Meta-Llama-3.1-405B \
     --testbed truthfulQA \
+    --vllm_mode inprocess \
+    --tensor_parallel_size 8 \
+    --gpu_memory_utilization 0.90 \
+    --batch_size 256 \
+    --K 1500
+
+# With custom settings
+python ICM.py \
+    --model meta-llama/Meta-Llama-3.1-70B \
+    --testbed truthfulQA \
+    --vllm_mode inprocess \
+    --tensor_parallel_size 4 \
+    --gpu_memory_utilization 0.85 \
+    --max_model_len 8192 \
+    --dtype bfloat16 \
     --alpha 50 \
-    --model meta-llama/Llama-3.1-8B \
-    --K 25
+    --batch_size 128 \
+    --K 1500
 ```
+
+
+
+### Command Line Arguments Reference
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--model` | `meta-llama/Meta-Llama-3.1-70B` | HuggingFace model name |
+| `--tensor_parallel_size` | `1` | Number of GPUs for tensor parallelism |
+| `--gpu_memory_utilization` | `0.90` | Fraction of GPU memory to use |
+| `--max_model_len` | `None` | Max sequence length (None = model default) |
+| `--disable_prefix_caching` | `False` | Disable prefix caching (not recommended) |
+| `--batch_size` | `256` | ICM batch size |
+| `--K` | `1500` | Max ICM iterations |
+| `--alpha` | `1` | Scoring coefficient |
+
 
 ### Copying Results to Local Machine
 
@@ -513,33 +558,35 @@ RuntimeError: CUDA out of memory
 
 ## Deployment Architectures
 
-### Single Server (Recommended for Testing)
+### In-Process Mode (Recommended)
+
+The simplest and most efficient setup. Everything runs in a single process:
 
 ```
 ┌─────────────────────────────────────┐
 │ GPU Server (8× A100)                │
 │ ┌─────────────────────────────────┐ │
-│ │ vLLM Server (localhost:8000)    │ │
-│ │ Llama-3.1-405B                  │ │
-│ └─────────────────────────────────┘ │
-│ ┌─────────────────────────────────┐ │
-│ │ ICM Script (local)              │ │
+│ │ Single Python Process           │ │
+│ │ ┌───────────────────────────┐   │ │
+│ │ │ ICM Script                │   │ │
+│ │ │ + VLLMInProcessClient     │   │ │
+│ │ │ + vLLM Engine (in-memory) │   │ │
+│ │ │ + Llama-3.1-405B          │   │ │
+│ │ └───────────────────────────┘   │ │
 │ └─────────────────────────────────┘ │
 └─────────────────────────────────────┘
+
+Command:
+python ICM.py --vllm_mode inprocess --tensor_parallel_size 8
 ```
 
-### Remote Server (Recommended for Production)
+**Advantages:**
+- No HTTP overhead
+- Simplest setup (no separate server)
+- Best for single-user, single-experiment runs
+- Direct access to vLLM's prefix caching
 
-```
-┌────────────────────┐         ┌─────────────────────────────────────┐
-│ Local Machine      │         │ GPU Server (8× A100)                │
-│                    │         │ ┌─────────────────────────────────┐ │
-│ ICM Script         │────────▶│ │ vLLM Server (0.0.0.0:8000)      │ │
-│                    │  HTTP   │ │ Llama-3.1-405B                  │ │
-│ VLLM_BASE_URL=     │         │ └─────────────────────────────────┘ │
-│  http://gpu:8000   │         │                                     │
-└────────────────────┘         └─────────────────────────────────────┘
-```
+
 
 ### Multi-Server (For Maximum Throughput)
 

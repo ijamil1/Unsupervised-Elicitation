@@ -15,7 +15,7 @@ from core.llm_api.openai_llm import (
     GPT_CHAT_MODELS,
     OpenAIChatModel,
 )
-from core.llm_api.vllm_llm import VLLMClient
+from core.llm_api.vllm_llm import VLLMInProcessClient
 from core.utils import load_secrets
 
 LOGGER = logging.getLogger(__name__)
@@ -29,11 +29,20 @@ class ModelAPI:
     )
     organization: None = None
     print_prompt_and_response: bool = False
-    use_vllm: bool = True  # NEW: Flag to enable vLLM (default: True)
-    vllm_base_url: str = None  # NEW: vLLM server URL (defaults to VLLM_BASE_URL from SECRETS)
+
+    # vLLM configuration
+    use_vllm: bool = True  # Flag to enable vLLM (default: True)
+
+    # In-process vLLM configuration
+    vllm_model_name: str = None  # Model name for in-process mode
+    vllm_tensor_parallel_size: int = 1  # Number of GPUs for tensor parallelism
+    vllm_gpu_memory_utilization: float = 0.90  # Fraction of GPU memory to use
+    vllm_max_model_len: int = None  # Maximum sequence length
+    vllm_enable_prefix_caching: bool = True  # Enable prefix caching
+    vllm_dtype: str = "auto"  # Data type
 
     _openai_chat: OpenAIChatModel = attrs.field(init=False)
-    _vllm_client: VLLMClient = attrs.field(init=False)  # NEW: vLLM client
+    _vllm_client: VLLMInProcessClient = attrs.field(init=False)
 
     running_cost: float = attrs.field(init=False, default=0)
     model_timings: dict[str, list[float]] = attrs.field(init=False, default={})
@@ -51,14 +60,21 @@ class ModelAPI:
             print_prompt_and_response=self.print_prompt_and_response,
         )
 
-        # NEW: Initialize vLLM client
+        # Initialize vLLM client based on mode
         if self.use_vllm:
-            vllm_url = self.vllm_base_url or secrets.get('VLLM_BASE_URL', 'http://localhost:8000')
-            self._vllm_client = VLLMClient(
-                base_url=vllm_url,
+            # In-process mode: load model directly into GPU memory
+            model_name = self.vllm_model_name or secrets.get('VLLM_MODEL_NAME', 'meta-llama/Meta-Llama-3.1-8B')
+            self._vllm_client = VLLMInProcessClient(
+                model_name=model_name,
+                tensor_parallel_size=self.vllm_tensor_parallel_size,
+                gpu_memory_utilization=self.vllm_gpu_memory_utilization,
+                max_model_len=self.vllm_max_model_len,
+                enable_prefix_caching=self.vllm_enable_prefix_caching,
+                dtype=self.vllm_dtype,
                 print_prompt_and_response=self.print_prompt_and_response,
             )
-            LOGGER.info(f"Initialized vLLM client at {vllm_url}")
+            LOGGER.info(f"Initialized vLLM in-process client for {model_name}")
+           
 
         Path("./prompt_history").mkdir(exist_ok=True)
 

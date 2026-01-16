@@ -1,41 +1,96 @@
 """
 vLLM Client Module for Self-Hosted LLM Inference
 
-This module provides a client for interacting with self-hosted vLLM servers.
+This module provides clients for vLLM inference:
+1. VLLMClient - HTTP client for remote vLLM servers
+2. VLLMInProcessClient - Direct in-process inference (no HTTP overhead)
+
 Key features:
 - No rate limiting (self-hosted)
 - Batched inference support for efficiency
-- OpenAI-compatible API
 - Logprobs extraction for ICM algorithm
+- In-process mode eliminates network overhead
 """
 
 import asyncio
 import logging
 import time
 from typing import List, Union, Optional
-import aiohttp
 import attrs
 
 from core.llm_api.base_llm import LLMResponse, ModelAPIProtocol, messages_to_single_prompt
 
 LOGGER = logging.getLogger(__name__)
 
+# Lazy import for vLLM to avoid import errors when not using in-process mode
+_vllm_llm = None
+_sampling_params = None
+
+def _get_vllm_imports():
+    """Lazy import vLLM modules to avoid import overhead when not needed."""
+    global _vllm_llm, _sampling_params
+    if _vllm_llm is None:
+        from vllm import LLM, SamplingParams
+        _vllm_llm = LLM
+        _sampling_params = SamplingParams
+    return _vllm_llm, _sampling_params
+
+
 
 @attrs.define()
-class VLLMClient(ModelAPIProtocol):
+class VLLMInProcessClient(ModelAPIProtocol):
     """
-    Client for self-hosted vLLM server.
+    In-process vLLM client for direct inference without HTTP overhead.
 
-    No rate limiting since we control the server.
-    Supports batched inference for maximum efficiency.
+    This client loads the model directly into GPU memory and performs
+    inference in the same process. Ideal when the model server and
+    client are on the same machine.
+
+    Key advantages over HTTP client:
+    - No network serialization overhead
+    - No HTTP request/response latency
+    - Direct access to vLLM's prefix caching
+    - Better GPU memory utilization
     """
 
-    base_url: str = attrs.field()
-    print_prompt_and_response: bool = False
-    timeout: int = 300  # Longer timeout for batch processing
+    model_name: str = attrs.field()
+    tensor_parallel_size: int = attrs.field(default=1)
+    gpu_memory_utilization: float = attrs.field(default=0.90)
+    max_model_len: Optional[int] = attrs.field(default=None)
+    enable_prefix_caching: bool = attrs.field(default=True)
+    print_prompt_and_response: bool = attrs.field(default=False)
+    dtype: str = attrs.field(default="auto")
 
-    def __attrs_post_init__(self):
-        LOGGER.info(f"Initializing vLLM client for {self.base_url}")
+    _llm: Optional[object] = attrs.field(init=False, default=None)
+    _initialized: bool = attrs.field(init=False, default=False)
+
+    def _ensure_initialized(self):
+        """Lazily initialize the vLLM engine on first use."""
+        if self._initialized:
+            return
+
+        LLM, _ = _get_vllm_imports()
+
+        LOGGER.info(f"Initializing vLLM in-process engine for {self.model_name}")
+        LOGGER.info(f"  tensor_parallel_size: {self.tensor_parallel_size}")
+        LOGGER.info(f"  gpu_memory_utilization: {self.gpu_memory_utilization}")
+        LOGGER.info(f"  enable_prefix_caching: {self.enable_prefix_caching}")
+
+        init_kwargs = {
+            "model": self.model_name,
+            "tensor_parallel_size": self.tensor_parallel_size,
+            "gpu_memory_utilization": self.gpu_memory_utilization,
+            "enable_prefix_caching": self.enable_prefix_caching,
+            "dtype": self.dtype,
+            "trust_remote_code": True,
+        }
+
+        if self.max_model_len is not None:
+            init_kwargs["max_model_len"] = self.max_model_len
+
+        self._llm = LLM(**init_kwargs)
+        self._initialized = True
+        LOGGER.info("vLLM engine initialized successfully")
 
     async def __call__(
         self,
@@ -46,20 +101,22 @@ class VLLMClient(ModelAPIProtocol):
         **kwargs,
     ) -> list[LLMResponse]:
         """
-        Main entry point for vLLM inference.
-        Supports both single and batched requests.
+        Main entry point for in-process vLLM inference.
 
         Args:
-            model_ids: List of model IDs (vLLM serves one model, uses first)
+            model_ids: List of model IDs (ignored, uses configured model)
             prompt: Single prompt string, list of prompts, or chat messages
             print_prompt_and_response: Whether to print I/O
-            max_attempts: Number of retry attempts
+            max_attempts: Number of retry attempts (less relevant for in-process)
             **kwargs: Additional parameters (max_tokens, temperature, etc.)
 
         Returns:
             List of LLMResponse objects
         """
-        model_id = model_ids[0]  # vLLM only serves one model at a time
+        # Ensure engine is initialized
+        self._ensure_initialized()
+
+        model_id = model_ids[0] if model_ids else self.model_name
 
         # Convert chat format to text if needed
         if isinstance(prompt, list) and len(prompt) > 0 and isinstance(prompt[0], dict):
@@ -75,27 +132,20 @@ class VLLMClient(ModelAPIProtocol):
 
         start_time = time.time()
 
-        # Make request with retries
-        for attempt in range(max_attempts):
-            try:
-                responses = await self._make_vllm_request(
-                    model_id, prompts, start_time, **kwargs
-                )
+        # Run inference (vLLM's generate is synchronous, run in executor to not block)
+        loop = asyncio.get_event_loop()
+        responses = await loop.run_in_executor(
+            None,
+            lambda: self._generate_sync(model_id, prompts, start_time, **kwargs)
+        )
 
-                # If original input was single prompt, return wrapped response
-                if single_prompt:
-                    return [{"prompt": prompts[0], "response": responses[0].to_dict()}]
-                else:
-                    return [{"prompt": p, "response": r.to_dict()} for p, r in zip(prompts, responses)]
+        # Format response
+        if single_prompt:
+            return [{"prompt": prompts[0], "response": responses[0].to_dict()}]
+        else:
+            return [{"prompt": p, "response": r.to_dict()} for p, r in zip(prompts, responses)]
 
-            except Exception as e:
-                LOGGER.warning(f"vLLM request failed (attempt {attempt+1}/{max_attempts}): {e}")
-                if attempt < max_attempts - 1:
-                    await asyncio.sleep(1.5 ** attempt)
-                else:
-                    raise RuntimeError(f"Failed to get response from vLLM after {max_attempts} attempts: {e}")
-
-    async def _make_vllm_request(
+    def _generate_sync(
         self,
         model_id: str,
         prompts: list[str],
@@ -103,71 +153,68 @@ class VLLMClient(ModelAPIProtocol):
         **kwargs
     ) -> list[LLMResponse]:
         """
-        Make the actual HTTP request to vLLM server.
-
-        vLLM supports batching natively via list of prompts.
-        This is the key optimization that eliminates N separate API calls.
+        Synchronous generation using vLLM's LLM.generate().
 
         Args:
-            model_id: Model identifier
-            prompts: List of prompt strings (can be 1 or many)
+            model_id: Model identifier (for response metadata)
+            prompts: List of prompt strings
             start_time: Timestamp when request started
-            **kwargs: API parameters
+            **kwargs: Sampling parameters
 
         Returns:
-            List of LLMResponse objects, one per prompt
+            List of LLMResponse objects
         """
+        _, SamplingParams = _get_vllm_imports()
+
+        # Build sampling params
+        sampling_params = SamplingParams(
+            max_tokens=kwargs.get("max_tokens", 1),
+            temperature=kwargs.get("temperature", 0.0),
+            top_p=kwargs.get("top_p", 1.0),
+            n=kwargs.get("n", 1),
+            logprobs=kwargs.get("top_logprobs", 20),  # Number of top logprobs to return
+        )
+
+        LOGGER.debug(f"Generating for {len(prompts)} prompts with params: {sampling_params}")
+
         api_start = time.time()
 
-        # Prepare request payload
-        # Note: vLLM uses 'logprobs' parameter to specify top-k logprobs
-        payload = {
-            "model": model_id,
-            "prompt": prompts if len(prompts) > 1 else prompts[0],
-            "max_tokens": kwargs.get("max_tokens", 1),
-            "temperature": kwargs.get("temperature", 0.0),
-            "top_p": kwargs.get("top_p", 1.0),
-            "n": kwargs.get("n", 1),
-            "logprobs": kwargs.get("top_logprobs", 20),  # vLLM uses 'logprobs' for top-k
-            "echo": False,
-        }
-        LOGGER.debug(f"Making vLLM request with {len(prompts)} prompts")
-
-        # Make async HTTP request
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.base_url}/v1/completions",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=self.timeout)
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise RuntimeError(f"vLLM request failed with status {response.status}: {error_text}")
-
-                result = await response.json()
+        # Run vLLM generation
+        outputs = self._llm.generate(prompts, sampling_params)
 
         api_duration = time.time() - api_start
         duration = time.time() - start_time
 
-        LOGGER.debug(f"vLLM request completed in {api_duration:.2f}s for {len(prompts)} prompts")
+        LOGGER.debug(f"Generation completed in {api_duration:.2f}s for {len(prompts)} prompts")
 
-        # Parse response into LLMResponse objects
+        # Convert vLLM outputs to LLMResponse format
         responses = []
-        for choice in result["choices"]:
-            # Extract logprobs in the format expected by the codebase
+        for output in outputs:
+            # vLLM returns one output per prompt, with potentially multiple completions
+            # We take the first completion (n=1 typically for ICM)
+            completion_output = output.outputs[0]
+
+            # Extract logprobs
             logprobs_list = None
-            if "logprobs" in choice and choice["logprobs"] is not None:
-                # vLLM returns logprobs in OpenAI format
-                token_logprobs = choice["logprobs"].get("top_logprobs", [])
-                if token_logprobs:
-                    # Convert to expected format: list of dicts {token: logprob}
-                    logprobs_list = token_logprobs
+            if completion_output.logprobs is not None:
+                # vLLM returns list of logprobs dicts, one per generated token
+                # Each dict maps token_id -> Logprob object
+                # We need to convert to format: list of {token_str: logprob_value}
+                logprobs_list = []
+                for token_logprobs in completion_output.logprobs:
+                    if token_logprobs is not None:
+                        # Convert to {token_string: logprob_value} format
+                        token_dict = {}
+                        for token_id, logprob_obj in token_logprobs.items():
+                            # logprob_obj has .decoded_token and .logprob attributes
+                            token_dict[logprob_obj.decoded_token] = logprob_obj.logprob
+                        logprobs_list.append(token_dict)
 
             responses.append(
                 LLMResponse(
                     model_id=model_id,
-                    completion=choice["text"],
-                    stop_reason=choice["finish_reason"],
+                    completion=completion_output.text,
+                    stop_reason=completion_output.finish_reason or "stop",
                     api_duration=api_duration,
                     duration=duration,
                     cost=0.0,  # Self-hosted, no per-token cost
@@ -180,16 +227,3 @@ class VLLMClient(ModelAPIProtocol):
                 print(f"\n{'='*80}\nPrompt {i+1}:\n{prompt}\n\nResponse:\n{response.completion}\n{'='*80}")
 
         return responses
-
-
-def create_vllm_client(base_url: str) -> VLLMClient:
-    """
-    Factory function to create a vLLM client.
-
-    Args:
-        base_url: URL of vLLM server (e.g., http://localhost:8000)
-
-    Returns:
-        VLLMClient instance
-    """
-    return VLLMClient(base_url=base_url)

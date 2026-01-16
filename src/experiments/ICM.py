@@ -380,6 +380,18 @@ def get_args():
     parser.add_argument("--initial_T", type=float, default=10)
     parser.add_argument("--final_T", type=float, default=0.01)
     parser.add_argument("--scheduler", type=str, default="log")
+
+    # vLLM configuration
+
+    parser.add_argument("--tensor_parallel_size", type=int, default=1,
+                        help="Number of GPUs for tensor parallelism")
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.90,
+                        help="Fraction of GPU memory to use (0.0-1.0)")
+    parser.add_argument("--max_model_len", type=int, default=None,
+                        help="Maximum sequence length (None for model default)")
+    parser.add_argument("--disable_prefix_caching", action="store_true",
+                        help="Disable vLLM prefix caching")
+
     args = parser.parse_args()
     return args
 
@@ -748,5 +760,17 @@ async def async_main():
     )
 
 if __name__ == "__main__":
-    model_api = ModelAPI(openai_fraction_rate_limit=0.99)
+    args = get_args()
+
+    # Initialize ModelAPI with vLLM configuration from command line args
+    model_api = ModelAPI(
+        openai_fraction_rate_limit=0.99,
+        use_vllm=True,
+        vllm_model_name=args.model,  # Use --model arg for vLLM model name
+        vllm_tensor_parallel_size=args.tensor_parallel_size,
+        vllm_gpu_memory_utilization=args.gpu_memory_utilization,
+        vllm_max_model_len=args.max_model_len,
+        vllm_enable_prefix_caching=not args.disable_prefix_caching
+    )
+
     asyncio.run(async_main())
