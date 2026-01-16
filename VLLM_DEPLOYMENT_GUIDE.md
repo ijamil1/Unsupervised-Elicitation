@@ -311,7 +311,6 @@ cd src/experiments
 python ICM.py \
     --model meta-llama/Llama-3.1-8B \
     --testbed truthfulQA \
-    --vllm_mode inprocess \
     --tensor_parallel_size 1 \
     --gpu_memory_utilization 0.90 \
     --K 100
@@ -320,7 +319,6 @@ python ICM.py \
 python ICM.py \
     --model meta-llama/Meta-Llama-3.1-70B \
     --testbed truthfulQA \
-    --vllm_mode inprocess \
     --tensor_parallel_size 4 \
     --gpu_memory_utilization 0.90 \
     --batch_size 256 \
@@ -330,7 +328,6 @@ python ICM.py \
 python ICM.py \
     --model meta-llama/Meta-Llama-3.1-405B \
     --testbed truthfulQA \
-    --vllm_mode inprocess \
     --tensor_parallel_size 8 \
     --gpu_memory_utilization 0.90 \
     --batch_size 256 \
@@ -340,11 +337,9 @@ python ICM.py \
 python ICM.py \
     --model meta-llama/Meta-Llama-3.1-70B \
     --testbed truthfulQA \
-    --vllm_mode inprocess \
     --tensor_parallel_size 4 \
     --gpu_memory_utilization 0.85 \
     --max_model_len 8192 \
-    --dtype bfloat16 \
     --alpha 50 \
     --batch_size 128 \
     --K 1500
@@ -360,7 +355,6 @@ python ICM.py \
 | `--tensor_parallel_size` | `1` | Number of GPUs for tensor parallelism |
 | `--gpu_memory_utilization` | `0.90` | Fraction of GPU memory to use |
 | `--max_model_len` | `None` | Max sequence length (None = model default) |
-| `--disable_prefix_caching` | `False` | Disable prefix caching (not recommended) |
 | `--batch_size` | `256` | ICM batch size |
 | `--K` | `1500` | Max ICM iterations |
 | `--alpha` | `1` | Scoring coefficient |

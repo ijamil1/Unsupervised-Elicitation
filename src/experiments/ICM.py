@@ -107,7 +107,7 @@ async def compute_logprobs_batched(model_api, model_id, examples_dict):
     scores = {}
     for example_id, response in zip(example_ids, responses):
         try:
-            logprobs = response["response"]["logprobs"][0]
+            logprobs = response["response"]["logprobs"]
             score = get_yes_no_diff_logprobs(logprobs)
             scores[example_id] = score
         except Exception as e:
@@ -333,7 +333,7 @@ async def predict_assignment_zero_shot(model, example):
 
     # Extract logprobs and compute score directly
     try:
-        logprobs = response[0]["response"]["logprobs"][0]
+        logprobs = response[0]["response"]["logprobs"]
         score = get_yes_no_diff_logprobs(logprobs)
     except Exception as e:
         print(f"Error in predict_assignment_zero_shot extracting score for example {example.get('uid', 'unknown')}: {e}")
@@ -364,7 +364,7 @@ def get_temperature(
         assert False
 
 
-def get_energy(metric, alpha):
+def get_energy(metric):
     return metric["train_prob"]
 
 def get_args():
@@ -374,7 +374,6 @@ def get_args():
     parser.add_argument("--model", type=str, default="meta-llama/Meta-Llama-3.1-70B")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_seed", type=int, default=8)
-    parser.add_argument("--alpha", type=int, default=1)
     parser.add_argument("--K", type=int, default=1500)
     parser.add_argument("--decay", type=float, default=0.99)
     parser.add_argument("--initial_T", type=float, default=10)
@@ -389,8 +388,7 @@ def get_args():
                         help="Fraction of GPU memory to use (0.0-1.0)")
     parser.add_argument("--max_model_len", type=int, default=None,
                         help="Maximum sequence length (None for model default)")
-    parser.add_argument("--disable_prefix_caching", action="store_true",
-                        help="Disable vLLM prefix caching")
+
 
     args = parser.parse_args()
     return args
@@ -497,7 +495,7 @@ async def icm_main(args):
     }
     
     print('init random labels = ', Counter([i['label'] for i in demonstrations.values() if i['type'] == 'seed']), 'init label acc = ', np.mean([i['label'] == i['vanilla_label'] for i in demonstrations.values() if i['type'] == 'seed']))
-    name = f"{args.testbed}-llama70b-K{args.K}-bc{args.batch_size}_seed{args.seed}-initialsize{args.num_seed}-weighted{args.alpha}-decay{args.decay}-initialT{args.initial_T}-finalT{args.final_T}-scheduler{args.scheduler}"
+    name = f"{args.testbed}-llama70b-K{args.K}-bc{args.batch_size}_seed{args.seed}-initialsize{args.num_seed}-decay{args.decay}-initialT{args.initial_T}-finalT{args.final_T}-scheduler{args.scheduler}"
 
     iter = 0
     flip_cnt = 0
@@ -561,9 +559,9 @@ async def icm_main(args):
             )
 
             if iter % 10 == 0:
-                print(f"iter = {iter}, pool size = {len(cur_pool)}, cur acc = {cur_metric['train_accuracy']}, new acc = {metric['train_accuracy']}, cur score = {get_energy(cur_metric, args.alpha)}, new score = {get_energy(metric, args.alpha)}")
+                print(f"iter = {iter}, pool size = {len(cur_pool)}, cur acc = {cur_metric['train_accuracy']}, new acc = {metric['train_accuracy']}, cur score = {get_energy(cur_metric)}, new score = {get_energy(metric)}")
 
-            accept_prob = math.exp((get_energy(metric, args.alpha) - get_energy(cur_metric, args.alpha)) / T)
+            accept_prob = math.exp((get_energy(metric) - get_energy(cur_metric)) / T)
             if random.random() < accept_prob:
                 demonstrations = tmp_demonstrations
                 flip_cnt += 1
@@ -770,7 +768,7 @@ if __name__ == "__main__":
         vllm_tensor_parallel_size=args.tensor_parallel_size,
         vllm_gpu_memory_utilization=args.gpu_memory_utilization,
         vllm_max_model_len=args.max_model_len,
-        vllm_enable_prefix_caching=not args.disable_prefix_caching
+        vllm_enable_prefix_caching=True
     )
 
     asyncio.run(async_main())

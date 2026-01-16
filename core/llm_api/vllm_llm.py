@@ -194,21 +194,26 @@ class VLLMInProcessClient(ModelAPIProtocol):
             # We take the first completion (n=1 typically for ICM)
             completion_output = output.outputs[0]
 
-            # Extract logprobs
-            logprobs_list = None
-            if completion_output.logprobs is not None:
-                # vLLM returns list of logprobs dicts, one per generated token
-                # Each dict maps token_id -> Logprob object
-                # We need to convert to format: list of {token_str: logprob_value}
-                logprobs_list = []
-                for token_logprobs in completion_output.logprobs:
-                    if token_logprobs is not None:
-                        # Convert to {token_string: logprob_value} format
-                        token_dict = {}
-                        for token_id, logprob_obj in token_logprobs.items():
-                            # logprob_obj has .decoded_token and .logprob attributes
-                            token_dict[logprob_obj.decoded_token] = logprob_obj.logprob
-                        logprobs_list.append(token_dict)
+            # Extract logprobs - required for ICM algorithm
+            if completion_output.logprobs is None or len(completion_output.logprobs)==0:
+                raise RuntimeError(
+                    "Logprobs are None/Empty. ICM requires logprobs for scoring. "
+                    "Ensure the SamplingParams include logprobs > 0. "
+                    f"Prompt: {output.prompt[:100]}..."
+                )
+
+            # vLLM returns list of logprobs dicts, one per generated token
+            # Each dict maps token_id -> Logprob object
+            # We need to convert to format: list of {token_str: logprob_value}
+            logprobs_list = []
+            token_logprobs = completion_output.logprobs[0]
+            if token_logprobs is not None:
+                # Convert to {token_string: logprob_value} format
+                token_dict = {}
+                for token_id, logprob_obj in token_logprobs.items():
+                    # logprob_obj has .decoded_token and .logprob attributes
+                    token_dict[logprob_obj.decoded_token] = logprob_obj.logprob
+                logprobs_list.append(token_dict)
 
             responses.append(
                 LLMResponse(
@@ -218,7 +223,7 @@ class VLLMInProcessClient(ModelAPIProtocol):
                     api_duration=api_duration,
                     duration=duration,
                     cost=0.0,  # Self-hosted, no per-token cost
-                    logprobs=logprobs_list
+                    logprobs=logprobs_list[0]
                 )
             )
 
