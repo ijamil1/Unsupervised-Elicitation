@@ -38,6 +38,7 @@ class ModelAPI:
     vllm_tensor_parallel_size: int = 1  # Number of GPUs for tensor parallelism
     vllm_gpu_memory_utilization: float = 0.90  # Fraction of GPU memory to use
     vllm_max_model_len: int = None  # Maximum sequence length
+    vllm_max_num_batched_tokens: int = None  # Maximum number of batched tokens
     vllm_enable_prefix_caching: bool = True  # Enable prefix caching
     vllm_dtype: str = "auto"  # Data type
 
@@ -69,6 +70,7 @@ class ModelAPI:
                 tensor_parallel_size=self.vllm_tensor_parallel_size,
                 gpu_memory_utilization=self.vllm_gpu_memory_utilization,
                 max_model_len=self.vllm_max_model_len,
+                max_num_batched_tokens=self.vllm_max_num_batched_tokens,
                 enable_prefix_caching=self.vllm_enable_prefix_caching,
                 dtype=self.vllm_dtype,
                 print_prompt_and_response=self.print_prompt_and_response,

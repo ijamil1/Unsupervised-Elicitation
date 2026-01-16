@@ -386,8 +386,10 @@ def get_args():
                         help="Number of GPUs for tensor parallelism")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.90,
                         help="Fraction of GPU memory to use (0.0-1.0)")
-    parser.add_argument("--max_model_len", type=int, default=None,
+    parser.add_argument("--max_model_len", type=int, default=10000,
                         help="Maximum sequence length (None for model default)")
+    parser.add_argument("--max_num_batched_tokens", type=int, default=262144,
+                        help="Maximum number of batched tokens per iteration")
 
 
     args = parser.parse_args()
@@ -768,6 +770,7 @@ if __name__ == "__main__":
         vllm_tensor_parallel_size=args.tensor_parallel_size,
         vllm_gpu_memory_utilization=args.gpu_memory_utilization,
         vllm_max_model_len=args.max_model_len,
+        vllm_max_num_batched_tokens=args.max_num_batched_tokens,
         vllm_enable_prefix_caching=True
     )
 

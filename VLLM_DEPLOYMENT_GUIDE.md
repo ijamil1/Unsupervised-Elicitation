@@ -339,8 +339,6 @@ python ICM.py \
     --testbed truthfulQA \
     --tensor_parallel_size 4 \
     --gpu_memory_utilization 0.85 \
-    --max_model_len 8192 \
-    --alpha 50 \
     --batch_size 128 \
     --K 1500
 ```

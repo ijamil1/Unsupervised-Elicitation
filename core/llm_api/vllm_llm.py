@@ -57,6 +57,7 @@ class VLLMInProcessClient(ModelAPIProtocol):
     tensor_parallel_size: int = attrs.field(default=1)
     gpu_memory_utilization: float = attrs.field(default=0.90)
     max_model_len: Optional[int] = attrs.field(default=None)
+    max_num_batched_tokens: Optional[int] = attrs.field(default=None)
     enable_prefix_caching: bool = attrs.field(default=True)
     print_prompt_and_response: bool = attrs.field(default=False)
     dtype: str = attrs.field(default="auto")
@@ -81,12 +82,16 @@ class VLLMInProcessClient(ModelAPIProtocol):
             "tensor_parallel_size": self.tensor_parallel_size,
             "gpu_memory_utilization": self.gpu_memory_utilization,
             "enable_prefix_caching": self.enable_prefix_caching,
+            "max_num_seqs": 256,
             "dtype": self.dtype,
             "trust_remote_code": True,
         }
 
         if self.max_model_len is not None:
             init_kwargs["max_model_len"] = self.max_model_len
+
+        if self.max_num_batched_tokens is not None:
+            init_kwargs["max_num_batched_tokens"] = self.max_num_batched_tokens
 
         self._llm = LLM(**init_kwargs)
         self._initialized = True
