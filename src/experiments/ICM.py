@@ -97,7 +97,7 @@ async def compute_logprobs_batched(model_api, model_id, examples_dict):
         model_id,
         all_prompts,  # List of prompts - vLLM handles batching internally
         logprobs=True,
-        top_logprobs=20,
+        top_logprobs=5,
         max_tokens=1,
         temperature=0.0,
     )
@@ -295,7 +295,7 @@ async def predict_assignment(model, example, demonstrations):
         model,
         prompt,  # Single prompt string
         logprobs=True,
-        top_logprobs=20,
+        top_logprobs=5,
         temperature=0.0,
         max_tokens=1,
     )
@@ -580,6 +580,7 @@ async def icm_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+    label_assignments = {}
     for idx, i in enumerate(test):
         i['uid'] = max_uid + 1 + idx
         new_label = await predict_assignment(
@@ -587,11 +588,11 @@ async def icm_main(args):
                 i,
                 demonstrations,
             )
-        
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
-    return correct_cnt / len(test)
+    return correct_cnt / len(test), label_assignments
 
 async def golden_supervision_main(args):
     train, fewshot_ids = load_train_data(args)
@@ -608,6 +609,7 @@ async def golden_supervision_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+    label_assignments = {}
     for idx, i in enumerate(test):
         i['uid'] = max_uid + 1 + idx
         new_label = await predict_assignment(
@@ -615,11 +617,11 @@ async def golden_supervision_main(args):
                 i,
                 demonstrations,
             )
-        
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
-    return correct_cnt / len(test)
+    return correct_cnt / len(test), label_assignments
 
 async def zero_shot_chat_main(args):
     #read in test data
@@ -634,33 +636,34 @@ async def zero_shot_chat_main(args):
         '405B': 'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo',
     }
     instruct_model = model_size_to_instruct.get(model_size, 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo')
-
+    label_assignments = {}
     for idx, i in enumerate(test):
         new_label = await predict_assignment_zero_shot(
                 instruct_model,
                 i
             )
-
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
         time.sleep(0.5)
-    return correct_cnt / len(test)
+    return correct_cnt / len(test), label_assignments
 
 async def zero_shot_pretrained_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+    label_assignments = {}
     for idx, i in enumerate(test):
         new_label = await predict_assignment_zero_shot(
                 args.model,
                 i
             )
-        
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
-    return correct_cnt / len(test)
+    return correct_cnt / len(test), label_assignments
 
 def plot_test_accuracies(icm_test_accuracy, golden_supervision_test_accuracy, zero_shot_chat_test_accuracy, zero_shot_pretrained_test_accuracy):
     accuracies = [
@@ -736,21 +739,24 @@ async def async_main():
     random.seed(args.seed)
 
     print('entering icm_main')
-    icm_test_accuracy = await icm_main(args)
+    icm_test_accuracy, icm_label_assignment = await icm_main(args)
 
     print('entering golden_supervision benchmarking method')
-    golden_supervision_test_accuracy = await golden_supervision_main(args)
+    golden_supervision_test_accuracy, golden_supervision_label_assignments = await golden_supervision_main(args)
 
     print('entering zero-shot chat benchmarking method')
-    zero_shot_chat_test_accuracy = await zero_shot_chat_main(args)
+    zero_shot_chat_test_accuracy, zero_shot_chat_label_assignments = await zero_shot_chat_main(args)
 
     print('entering zero-shot pretrained benchmarking method')
-    zero_shot_pretrained_test_accuracy = await zero_shot_pretrained_main(args)
+    zero_shot_pretrained_test_accuracy, zero_shot_pretained_label_assignments = await zero_shot_pretrained_main(args)
 
-    print(f"ICM test accuracy = {icm_test_accuracy}")
-    print(f"Golden supervision test accuracy = {golden_supervision_test_accuracy}")
-    print(f"Zero shot chat test accuracy = {zero_shot_chat_test_accuracy}")
-    print(f"Zero shot pretrained test accuracy = {zero_shot_pretrained_test_accuracy}")
+    print(f"ICM test accuracy = {icm_test_accuracy}, ICM label assignments = {icm_label_assignment}")
+    print("\n")
+    print(f"Golden supervision test accuracy = {golden_supervision_test_accuracy}, Golden supervision label assignments = {golden_supervision_label_assignments}")
+    print("\n")
+    print(f"Zero shot chat test accuracy = {zero_shot_chat_test_accuracy}, Zero shot chat label assignments = {zero_shot_chat_label_assignments}")
+    print("\n")
+    print(f"Zero shot pretrained test accuracy = {zero_shot_pretrained_test_accuracy}, Zero shot pretrained label assignments = {zero_shot_pretained_label_assignments}")
 
     # Call the plotting function
     plot_test_accuracies(

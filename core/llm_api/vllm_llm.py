@@ -197,7 +197,7 @@ class VLLMInProcessClient(ModelAPIProtocol):
             temperature=kwargs.get("temperature", 0.0),
             top_p=kwargs.get("top_p", 1.0),
             n=kwargs.get("n", 1),
-            logprobs=kwargs.get("top_logprobs", 20),  # Number of top logprobs to return
+            logprobs=kwargs.get("top_logprobs", 5),  # Number of top logprobs to return
         )
 
         LOGGER.debug(f"Generating for {len(prompts)} prompts with params: {sampling_params}")

@@ -63,9 +63,6 @@ git checkout vllm-integration
 python3 -m venv venv
 source venv/bin/activate
 
-# Or use conda
-conda create -n ue python=3.10
-conda activate ue
 ```
 
 ### 4. Install Dependencies
@@ -75,15 +72,6 @@ conda activate ue
 # This installs all dependencies AND makes the code importable
 pip install -e .
 ```
-
-**Alternative (simpler but less robust):**
-```bash
-# If pip install -e . has issues, fall back to:
-pip install -r requirements.txt
-```
-
-**Note:** The installation may take 5-10 minutes depending on your connection. The editable install (`-e`) is recommended because your code uses absolute imports like `from core.llm_api import ModelAPI`.
-
 ### 5. Verify Installation
 
 ```bash
@@ -187,50 +175,6 @@ export TMPDIR=/workspace/tmp
 python -c "import vllm; print(vllm.__version__)"
 ```
 
-## Server Deployment
-
-### Quick Start
-
-Use the provided launch script:
-
-```bash
-# For 405B model (requires 8 GPUs)
-./scripts/launch_vllm_server.sh 405B
-
-# For 70B model (requires 4 GPUs)
-./scripts/launch_vllm_server.sh 70B
-
-# For 8B model (requires 1 GPU)
-./scripts/launch_vllm_server.sh 8B
-```
-
-### Manual Launch
-
-If you prefer manual control:
-
-```bash
-vllm serve meta-llama/Meta-Llama-3.1-405B \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --gpu-memory-utilization 0.9 \
-    --max-model-len 8192 \
-    --tensor-parallel-size 8 \
-    --enable-prefix-caching \
-    --max-num-seqs 256 \
-    --max-num-batched-tokens 32768 \
-    --disable-log-requests
-
-vllm serve meta-llama/Meta-Llama-3.1-70B \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --gpu-memory-utilization 0.9 \
-    --max-model-len 8192 \
-    --tensor-parallel-size 4 \
-    --enable-prefix-caching \
-    --max-num-seqs 256 \
-    --max-num-batched-tokens 32768 \
-    --disable-log-requests
-```
 
 ### Important Parameters
 
@@ -240,50 +184,6 @@ vllm serve meta-llama/Meta-Llama-3.1-70B \
 - `--tensor-parallel-size`: Number of GPUs for distributed inference
 - `--gpu-memory-utilization`: Fraction of GPU memory to use (0.9 = 90%)
 
-### Verify Server is Running
-
-```bash
-# Test the server (specify model size: 8, 70, or 405)
-python scripts/test_vllm_server.py 405    # For 405B model
-python scripts/test_vllm_server.py 70     # For 70B model
-python scripts/test_vllm_server.py 8      # For 8B model
-
-# For remote server
-python scripts/test_vllm_server.py 8 --base-url http://remote-server:8000
-
-# Or manually with curl
-curl http://localhost:8000/v1/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "meta-llama/Meta-Llama-3.1-405B",
-    "prompt": "Question: Is the sky blue?\nClaim: Yes\nI think this claim is ",
-    "max_tokens": 1,
-    "logprobs": 20,
-    "temperature": 0.0
-  }'
-
-  curl http://localhost:8000/v1/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "meta-llama/Meta-Llama-3.1-70B",
-    "prompt": "Question: Is the sky blue?\nClaim: Yes\nI think this claim is ",
-    "max_tokens": 1,
-    "logprobs": 20,
-    "temperature": 0.0
-  }'
-
-   curl http://localhost:8000/v1/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "meta-llama/Llama-3.1-8B",
-    "prompt": "Are you AI or a human? Answer yes or no",
-    "max_tokens": 1,
-    "logprobs": 20,
-    "temperature": 0.0
-  }'
-```
-
-Expected output: JSON with completion and logprobs.
 
 ## Configuration
 
