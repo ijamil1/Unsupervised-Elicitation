@@ -159,7 +159,7 @@ def get_pipeline_batched(
         num_problems=num_problems,
         use_cache=use_cache,
     )
-    pipeline = Pipeline(pipeline_config, use_vllm=True)  # Enable vLLM
+    pipeline = Pipeline(pipeline_config, model_api=model_api)  # Pass shared model_api
 
     assert assignment is not None
     initial_assign = pipeline.add_load_data_step(
@@ -303,7 +303,7 @@ async def predict_assignment(model, example, demonstrations):
     
     # Extract logprobs and compute score directly (same as compute_logprobs_batched)
     try:
-        logprobs = response[0]["response"]["logprobs"][0]
+        logprobs = response[0]["response"]["logprobs"]
         score = get_yes_no_diff_logprobs(logprobs)
     except Exception as e:
         print('response: ', response)
@@ -333,7 +333,10 @@ async def predict_assignment_zero_shot(model, example):
 
     # Extract logprobs and compute score directly
     try:
-        logprobs = response[0]["response"]["logprobs"]
+        if 'Instruct' in model:
+            logprobs = response[0]["response"]["logprobs"][0]
+        else:
+            logprobs = response[0]["response"]["logprobs"]
         score = get_yes_no_diff_logprobs(logprobs)
     except Exception as e:
         print(f"Error in predict_assignment_zero_shot extracting score for example {example.get('uid', 'unknown')}: {e}")
@@ -507,7 +510,6 @@ async def icm_main(args):
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
-
         if iter == 0:
             pipeline = get_pipeline_batched(  # CHANGED: Use batched version
                 args.model,
@@ -518,7 +520,6 @@ async def icm_main(args):
             )
             results = await pipeline.run()
             cur_metric = results["evaluate"]
-             
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
@@ -774,4 +775,8 @@ if __name__ == "__main__":
         vllm_enable_prefix_caching=True
     )
 
-    asyncio.run(async_main())
+    try:
+        asyncio.run(async_main())
+    finally:
+        # Gracefully shutdown vLLM engine
+        model_api.shutdown()

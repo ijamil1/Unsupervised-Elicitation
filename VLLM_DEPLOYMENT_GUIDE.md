@@ -313,7 +313,7 @@ python ICM.py \
     --testbed truthfulQA \
     --tensor_parallel_size 1 \
     --gpu_memory_utilization 0.90 \
-    --K 100
+    --K 500
 
 # 70B model with 4 GPUs
 python ICM.py \

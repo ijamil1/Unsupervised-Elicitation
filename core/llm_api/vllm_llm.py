@@ -67,7 +67,7 @@ class VLLMInProcessClient(ModelAPIProtocol):
 
     def _ensure_initialized(self):
         """Lazily initialize the vLLM engine on first use."""
-        if self._initialized:
+        if self._initialized or self._llm is not None:
             return
 
         LLM, _ = _get_vllm_imports()
@@ -96,6 +96,26 @@ class VLLMInProcessClient(ModelAPIProtocol):
         self._llm = LLM(**init_kwargs)
         self._initialized = True
         LOGGER.info("vLLM engine initialized successfully")
+
+    def shutdown(self):
+        """Gracefully shutdown the vLLM engine."""
+        if self._llm is not None:
+            LOGGER.info("Shutting down vLLM engine...")
+            try:
+                # vLLM's LLM class may have different shutdown methods depending on version
+                if hasattr(self._llm, 'shutdown'):
+                    self._llm.shutdown()
+                elif hasattr(self._llm, '__del__'):
+                    del self._llm
+                self._llm = None
+                self._initialized = False
+                LOGGER.info("vLLM engine shutdown complete")
+            except Exception as e:
+                LOGGER.warning(f"Error during vLLM shutdown: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup."""
+        self.shutdown()
 
     async def __call__(
         self,

@@ -217,3 +217,8 @@ class ModelAPI:
 
     def reset_cost(self):
         self.running_cost = 0
+
+    def shutdown(self):
+        """Gracefully shutdown the vLLM engine."""
+        if self.use_vllm and hasattr(self, '_vllm_client') and self._vllm_client is not None:
+            self._vllm_client.shutdown()

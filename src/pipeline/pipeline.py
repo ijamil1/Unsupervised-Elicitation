@@ -82,25 +82,23 @@ class PipelineConfig:
 class Pipeline:
     # Class variables shared across all instances
     _model_api = None
-    _initialized = False
 
-    def __init__(self, config, use_vllm=True):  # NEW: use_vllm parameter
+    def __init__(self, config, model_api=None):
         self.config = config
-        self.use_vllm = use_vllm  # NEW: Store vLLM flag
         self.steps = []
         self.step_names = set()
         self.results = {}
 
-        # Initialize shared model_api and limited_model_api on first access
-        if not Pipeline._initialized:
+        # Use provided model_api or fall back to class-level shared instance
+        if model_api is not None:
+            Pipeline._model_api = model_api
+        elif Pipeline._model_api is None:
+            # Only create a new ModelAPI if none was provided and none exists
             Pipeline._model_api = ModelAPI(
                 self.config.openai_fraction_rate_limit,
                 self.config.organization,
                 self.config.print_prompt_and_response,
-                use_vllm=use_vllm,  # NEW: Pass vLLM flag to ModelAPI
             )
-  
-            Pipeline._initialized = True
 
         self.file_sem = asyncio.BoundedSemaphore(self.config.num_open_files)
         self.cost = {"red": 0, "blue": 0}
