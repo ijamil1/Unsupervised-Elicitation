@@ -362,7 +362,7 @@ def get_temperature(
     if schedule == "exp":
         return max(final_temp, initial_temp * (decay_rate**iteration))
     elif schedule == "log":
-        return max(final_temp, initial_temp / (1 + 2 * np.log(1 + iteration)))
+        return max(final_temp, initial_temp / (1 + 4 * np.log(1 + iteration)))
     else:
         assert False
 
@@ -520,9 +520,14 @@ async def icm_main(args):
             )
             results = await pipeline.run()
             cur_metric = results["evaluate"]
+
+        if iter % 50 == 0 and iter > 0:
+            print('Iteration: ', iter)
+
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
+
         while True: # weighted sampling
             candidates_ids = whole_ids
             weights = [1 for _ in range(len(candidates_ids))]
