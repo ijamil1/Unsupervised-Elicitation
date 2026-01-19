@@ -221,8 +221,8 @@ python ICM.py \
     --testbed truthfulQA \
     --tensor_parallel_size 4 \
     --gpu_memory_utilization 0.90 \
-    --batch_size 256 \
-    --K 1500
+    --max_num_batched_tokens 200000 \
+    --K 1500 
 
 # 405B model with 8 GPUs
 python ICM.py \
