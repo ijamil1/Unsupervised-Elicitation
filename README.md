@@ -54,7 +54,6 @@ pip install -e .
 cat > SECRETS << 'EOF'
 HF_TOKEN=your_huggingface_token
 TOGETHER_API_KEY=your_together_api_key  # Optional, for chat model baseline
-VLLM_BASE_URL=http://localhost:8000
 EOF
 ```
 

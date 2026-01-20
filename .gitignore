@@ -157,3 +157,4 @@ results*
 logs
 .claude/settings.local.json
 test*.py
+VLLM_DEPLOYMENT_GUIDE.md
