@@ -55,6 +55,18 @@ cat > SECRETS << 'EOF'
 HF_TOKEN=your_huggingface_token
 TOGETHER_API_KEY=your_together_api_key  # Optional, for chat model baseline
 EOF
+
+# (Optional) explicitly set up where HuggingFace will download and store LLM
+mkdir -p /workspace/hf_cache
+mkdir -p /workspace/hf_cache/hub
+mkdir -p /workspace/hf_cache/transformers
+mkdir -p /workspace/tmp
+
+
+export HF_HOME=/workspace/hf_cache
+export HUGGINGFACE_HUB_CACHE=/workspace/hf_cache/hub
+export TRANSFORMERS_CACHE=/workspace/hf_cache/transformers
+export TMPDIR=/workspace/tmp
 ```
 
 ### Run Experiments
