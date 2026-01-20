@@ -1,6 +1,6 @@
 # Unsupervised Elicitation with vLLM Self-Hosting
 
-This repository is a fork of [Jiaxin-Wen/Unsupervised-Elicitation](https://github.com/Jiaxin-Wen/Unsupervised-Elicitation). This fork refactors the code to use vLLM, which downloads and self-hosts the base model directly within the Python script (no separate server deployment required). This enables multi-GPU tensor parallelism and supports running larger models (8B, 70B, 405B) given the necessary hardware.
+This repository is a fork of [Jiaxin-Wen/Unsupervised-Elicitation](https://github.com/Jiaxin-Wen/Unsupervised-Elicitation) which implements ICM (introduced in https://alignment.anthropic.com/2025/unsupervised-elicitation/). This fork refactors the code to use vLLM, which downloads and self-hosts the base model directly within the Python script (no separate server deployment required and no API calls required for ICM) and uses a subset of the data used in the original paper to essentially replicate the results of figure 1 in the paper. 
 
 ## Results
 
@@ -96,6 +96,9 @@ python ICM.py \
 | `--initial_T` | `1.0` | Initial temperature for simulated annealing |
 | `--final_T` | `0.01` | Final temperature for simulated annealing |
 
+
+## Link to My Critique of the ICM Paper (Part 2 of https://praxis-research.org/sprints/unsupervised-elicitation)
+https://docs.google.com/document/d/1PupTFy2Li4iC9IyVPzAeUyne83y4k5sC54ioCDlbdoI/edit?usp=sharing
 
 ## Acknowledgments
 
