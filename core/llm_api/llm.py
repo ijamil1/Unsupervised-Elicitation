@@ -9,16 +9,13 @@ from typing import Callable, Literal, Optional, Union
 
 import attrs
 
-from core.llm_api.anthropic_llm import ANTHROPIC_MODELS, AnthropicChatModel
 from core.llm_api.base_llm import LLMResponse, ModelAPIProtocol
 from core.llm_api.openai_llm import (
     BASE_MODELS,
     GPT_CHAT_MODELS,
-    OAIBasePrompt,
-    OAIChatPrompt,
-    OpenAIBaseModel,
     OpenAIChatModel,
 )
+from core.llm_api.vllm_llm import VLLMInProcessClient
 from core.utils import load_secrets
 
 LOGGER = logging.getLogger(__name__)
@@ -33,8 +30,20 @@ class ModelAPI:
     organization: None = None
     print_prompt_and_response: bool = False
 
-    _openai_base: OpenAIBaseModel = attrs.field(init=False)
+    # vLLM configuration
+    use_vllm: bool = True  # Flag to enable vLLM (default: True)
+
+    # In-process vLLM configuration
+    vllm_model_name: str = None  # Model name for in-process mode
+    vllm_tensor_parallel_size: int = 1  # Number of GPUs for tensor parallelism
+    vllm_gpu_memory_utilization: float = 0.90  # Fraction of GPU memory to use
+    vllm_max_model_len: int = None  # Maximum sequence length
+    vllm_max_num_batched_tokens: int = None  # Maximum number of batched tokens
+    vllm_enable_prefix_caching: bool = True  # Enable prefix caching
+    vllm_dtype: str = "auto"  # Data type
+
     _openai_chat: OpenAIChatModel = attrs.field(init=False)
+    _vllm_client: VLLMInProcessClient = attrs.field(init=False)
 
     running_cost: float = attrs.field(init=False, default=0)
     model_timings: dict[str, list[float]] = attrs.field(init=False, default={})
@@ -44,16 +53,30 @@ class ModelAPI:
         secrets = load_secrets()
         if self.organization is None:
             self.organization = "NYU_ORG"
-        self._openai_base = OpenAIBaseModel(
-            frac_rate_limit=self.openai_fraction_rate_limit,
-            organization=secrets[self.organization],
-            print_prompt_and_response=self.print_prompt_and_response,
-        )
+
+
         self._openai_chat = OpenAIChatModel(
             frac_rate_limit=self.openai_fraction_rate_limit,
             organization=secrets[self.organization],
             print_prompt_and_response=self.print_prompt_and_response,
         )
+
+        # Initialize vLLM client based on mode
+        if self.use_vllm:
+            # In-process mode: load model directly into GPU memory
+            model_name = self.vllm_model_name or secrets.get('VLLM_MODEL_NAME', 'meta-llama/Meta-Llama-3.1-8B')
+            self._vllm_client = VLLMInProcessClient(
+                model_name=model_name,
+                tensor_parallel_size=self.vllm_tensor_parallel_size,
+                gpu_memory_utilization=self.vllm_gpu_memory_utilization,
+                max_model_len=self.vllm_max_model_len,
+                max_num_batched_tokens=self.vllm_max_num_batched_tokens,
+                enable_prefix_caching=self.vllm_enable_prefix_caching,
+                dtype=self.vllm_dtype,
+                print_prompt_and_response=self.print_prompt_and_response,
+            )
+            LOGGER.info(f"Initialized vLLM in-process client for {model_name}")
+           
 
         Path("./prompt_history").mkdir(exist_ok=True)
 
@@ -143,16 +166,11 @@ class ModelAPI:
             # # trick to double rate limit for most recent model only
 
         def model_id_to_class(model_id: str) -> ModelAPIProtocol:
-            if model_id in ["gpt-4-base", "gpt-3.5-turbo-instruct"]:
-                return (
-                    self._openai_base_arg
-                )  # NYU ARG is only org with access to this model
-            elif model_id in BASE_MODELS:
-                return self._openai_base
+            # NEW: Route base models to vLLM if enabled
+            if self.use_vllm and model_id in BASE_MODELS:
+                return self._vllm_client
             elif model_id in GPT_CHAT_MODELS or "ft:gpt-3.5-turbo" in model_id:
                 return self._openai_chat
-            elif model_id in ANTHROPIC_MODELS:
-                return self._anthropic_chat
             raise ValueError(f"Invalid model id: {model_id}")
 
         model_classes = [model_id_to_class(model_id) for model_id in model_ids]
@@ -164,53 +182,19 @@ class ModelAPI:
             kwargs.get("max_tokens") if kwargs.get("max_tokens") is not None else 2000
         )
         model_class = model_classes[0]
-        if isinstance(model_class, AnthropicChatModel):
-            kwargs["max_tokens_to_sample"] = max_tokens
-        else:
-            kwargs["max_tokens"] = max_tokens
-        # Check if current prompt has already been saved in the save file
-        # If so, directly return previous result
-        responses = None
-        #if use_cache and kwargs.get("save_path") is not None:
-        #    try:
-        #        responses = self._load_from_cache(kwargs.get("save_path"))
-        #    except:
-        #        logging.error(f"invalid cache data: {kwargs.get('save_path')}")
-
-        # After loading cache, we do not directly return previous results,
-        # but continue running it through parse_fn and re-save it.
-        # This is because we may frequently update the parse_fn during development
-        if responses is None:
-            num_candidates = num_candidates_per_completion * n
-            if isinstance(model_class, AnthropicChatModel):
-                responses = list(
-                    chain.from_iterable(
-                        await asyncio.gather(
-                            *[
-                                model_class(
-                                    model_ids,
-                                    prompt,
-                                    print_prompt_and_response,
-                                    max_attempts_per_api_call,
-                                    **kwargs,
-                                )
-                                for _ in range(num_candidates)
-                            ]
-                        )
-                    )
-                )
-            else:
-                responses = await model_class(
-                    model_ids,
-                    prompt,
-                    print_prompt_and_response,
-                    max_attempts_per_api_call,
-                    n=num_candidates,
-                    **kwargs,
-                )
-                print(responses)
-                print("%" * 100)
-
+      
+        kwargs["max_tokens"] = max_tokens
+        num_candidates = 1
+        
+        responses = await model_class(
+            model_ids,
+            prompt,
+            print_prompt_and_response,
+            max_attempts_per_api_call,
+            n=num_candidates,
+            **kwargs,
+        )
+         
         modified_responses = []
         for response in responses:
             self.running_cost += response["response"]["cost"]
@@ -229,75 +213,12 @@ class ModelAPI:
             )
             modified_responses.append(response)
 
-        #if kwargs.get("save_path") is not None:
-        #    if file_sem is not None:
-        #        async with file_sem:
-        #            with open(kwargs.get("save_path"), "w") as f:
-        #                json.dump(modified_responses, f, indent=2)
-        #    else:
-        #        with open(kwargs.get("save_path"), "w") as f:
-        #            json.dump(modified_responses, f, indent=2)
-        return modified_responses[:n]
+        return modified_responses
 
     def reset_cost(self):
         self.running_cost = 0
 
-
-async def demo():
-    model_api = ModelAPI(anthropic_num_threads=2, openai_fraction_rate_limit=0.99)
-    anthropic_requests = [
-        model_api(
-            "claude-3-5-sonnet-20240620",
-            [
-                {"role": "system", "content": "You are Claude."},
-                {"role": "user", "content": "who are you!"},
-            ],
-            max_tokens=20,
-            print_prompt_and_response=False,
-        )
-    ]
-    oai_chat_messages = [
-        [
-            {"role": "system", "content": "You are gpt-3.5-turbo."},
-            {"role": "user", "content": "who are you!"},
-        ],
-        [
-            {
-                "role": "system",
-                "content": "You are gpt-4",
-            },
-            {"role": "user", "content": "who are you!"},
-        ],
-    ]
-    oai_chat_models = ["gpt-3.5-turbo-16k"]
-    oai_chat_requests = [
-        model_api(
-            oai_chat_models,
-            prompt=message,
-            max_tokens=16_000,
-            n=1,
-            print_prompt_and_response=False,
-        )
-        for message in oai_chat_messages
-    ]
-    answer = await asyncio.gather(*anthropic_requests, *oai_chat_requests)
-
-    for responses in answer:
-        for i in responses:
-            print(i.completion)
-            print("=" * 100)
-
-    costs = defaultdict(int)
-    for responses in answer:
-        for response in responses:
-            costs[response.model_id] += response.cost
-
-    print("-" * 80)
-    print("Costs:")
-    for model_id, cost in costs.items():
-        print(f"{model_id}: ${cost}")
-    return answer
-
-
-if __name__ == "__main__":
-    asyncio.run(demo())
+    def shutdown(self):
+        """Gracefully shutdown the vLLM engine."""
+        if self.use_vllm and hasattr(self, '_vllm_client') and self._vllm_client is not None:
+            self._vllm_client.shutdown()

@@ -15,21 +15,16 @@ from core.llm_api.llm import ModelAPI
 from core.utils import setup_environment
 
 from src.model_querying.prompt_creation import (
-    get_decision_prompt,
     get_judge_prompt_fewshot,
     get_judge_prompt_zeroshot
 )
 from src.model_querying.solution_extraction import (
-    extract_claim_logprobs,
-    extract_decision_logprobs,
+get_yes_no_diff_logprobs
 )
 from src.pipeline.pipeline import Pipeline, PipelineConfig
 from src.tools.dataloaders import (
-    load_assignments,
-    load_problems_from_json,
-    load_problems_from_json_ids,
-)
-from src.tools.path_utils import get_default_results_directory, get_root_directory
+    load_assignments)
+from src.tools.path_utils import get_root_directory
 
 
 def calculate_accuracy(train_data):
@@ -70,7 +65,60 @@ def update_assign(data):
     return data
 
 
-def get_pipeline(
+async def compute_logprobs_batched(model_api, model_id, examples_dict):
+    """
+    Compute log probabilities for all examples using batched vLLM inference.
+
+    This is the KEY optimization: instead of making len(examples_dict) separate API calls,
+    we make a single batched call to vLLM which processes all prompts together.
+
+    Args:
+        model_api: The ModelAPI instance (should route to vLLM)
+        model_id: Model identifier (e.g., "meta-llama/Meta-Llama-3.1-405B")
+        examples_dict: Dict of {example_id: example_data}
+                      Each example must have "demonstration" field prepared
+
+    Returns:
+        Dict of {example_id: score}
+    """
+    example_ids = list(examples_dict.keys())
+    examples = list(examples_dict.values())
+
+    # Prepare all prompts at once
+    all_prompts = []
+    for example in examples:
+        prompt = get_judge_prompt_fewshot(example, pipeline=False)
+        all_prompts.append(prompt)
+
+    # CRITICAL: Make a single batched request to vLLM
+    # vLLM will process all prompts in parallel using batch inference
+    # Batch size is automatically determined by len(all_prompts) = len(cur_pool)
+    responses = await model_api(
+        model_id,
+        all_prompts,  # List of prompts - vLLM handles batching internally
+        logprobs=True,
+        top_logprobs=5,
+        max_tokens=1,
+        temperature=0.0,
+    )
+    assert len(responses) == len(examples)
+    
+    # Extract scores from batched responses
+    scores = {}
+    for example_id, response in zip(example_ids, responses):
+        try:
+            logprobs = response["response"]["logprobs"]
+            score = get_yes_no_diff_logprobs(logprobs)
+            scores[example_id] = score
+        except Exception as e:
+            print(response)
+            print(f"Error in compute_logprobs_batched extracting score for example {example_id}: {e}; there are {len(responses)} responses in total")
+            scores[example_id] = 0
+
+    return scores
+
+
+def get_pipeline_batched(
     model,
     name=None,
     use_cache=True,
@@ -79,15 +127,31 @@ def get_pipeline(
     iter=None,
     assignment=None,
 ):
-    pipeline_name = f"iterative-truth-assign-iter-{iter}"
+    """
+    BATCHED VERSION of get_pipeline that uses vLLM's batch inference.
+
+    Instead of creating N separate API calls (one per example), this creates a single
+    batched call that processes all examples together. This is the KEY optimization.
+
+    Args:
+        model: Model identifier
+        name: Pipeline name
+        use_cache: Whether to cache results
+        num_problems: Number of problems (unused)
+        decision_id: Decision ID (unused)
+        iter: Iteration number
+        assignment: Dict of examples with labels
+
+    Returns:
+        Pipeline instance configured for batched inference
+    """
+    pipeline_name = f"iterative-truth-assign-iter-{iter}-batched"
     if decision_id is not None:
         pipeline_name += f"-{decision_id}"
     if name is not None:
         pipeline_name += "-" + name
 
     ROOT_DIR = get_root_directory()
-    DATA_DIR = ROOT_DIR / "data"
-
 
     pipeline_config = PipelineConfig(
         pipeline_name,
@@ -95,7 +159,7 @@ def get_pipeline(
         num_problems=num_problems,
         use_cache=use_cache,
     )
-    pipeline = Pipeline(pipeline_config)
+    pipeline = Pipeline(pipeline_config, model_api=model_api)  # Pass shared model_api
 
     assert assignment is not None
     initial_assign = pipeline.add_load_data_step(
@@ -103,6 +167,7 @@ def get_pipeline(
     )
 
     def add_train_demonstrations(train_data):
+        """Same as before - prepare leave-one-out demonstrations"""
         copy_data = deepcopy(train_data)
         copy_data = {k: v for k, v in copy_data.items() if v["label"] is not None}
         keys = list(copy_data.keys())
@@ -145,7 +210,7 @@ def get_pipeline(
             for group in sorted_demos.values():
                 for k, v in group:
                     out_sorted_demos[k] = v
-                    
+
             copy_data[key]["demonstration"] = out_sorted_demos
 
         return copy_data
@@ -156,18 +221,35 @@ def get_pipeline(
         dependencies=[initial_assign],
     )
 
-    get_train_preds = pipeline.add_query_step(
-        "get_train_preds",
-        model,
-        get_judge_prompt_fewshot,
-        extract_claim_logprobs,
-        dependencies=[merged_train_data],
-        logprobs=True,
-        top_logprobs = 20,
-        max_tokens=1,
-        use_cache=use_cache,
-    )
+    # NEW: Batched inference step replaces add_query_step
+    async def batched_inference_step(train_data):
+        """
+        Custom transformation step that performs batched inference.
 
+        This replaces the query_model step which would create N separate API calls.
+        Instead, we call compute_logprobs_batched which makes a single batched call.
+        """
+        # Compute scores using batched vLLM inference
+        scores = await compute_logprobs_batched(
+            pipeline.model_api,
+            model,
+            train_data,
+        )
+
+        # Add scores to examples
+        result = {}
+        for example_id, example in train_data.items():
+            example_copy = example.copy()
+            example_copy["score"] = scores.get(example_id, 0)
+            result[example_id] = example_copy
+
+        return result
+
+    get_train_preds = pipeline.add_transformation_step(
+        "get_train_preds_batched",
+        batched_inference_step,
+        dependencies=[merged_train_data],
+    )
 
     eval_preds = pipeline.add_eval_step(
         "evaluate",
@@ -178,43 +260,89 @@ def get_pipeline(
 
 
 async def predict_assignment(model, example, demonstrations):
+    """
+    Predict label for a single example using vLLM direct inference.
+
+    Modified to follow the same pattern as compute_logprobs_batched:
+    - Makes direct API call to vLLM
+    - Extracts logprobs and computes score directly (no parse_fn)
+    - Uses get_yes_no_diff_logprobs for consistency
+
+    Args:
+        model: Model identifier
+        example: The example to label
+        demonstrations: Dict of labeled examples (leave-one-out)
+
+    Returns:
+        Predicted label (0 or 1)
+    """
+    # Prepare demonstrations (leave out current example)
     demos = [
         v
         for k, v in demonstrations.items()
         if k != example["uid"] and v["label"] is not None
     ]
-    model_requests = [
-        model_api(
-            model,
-            get_judge_prompt_fewshot(
-                example,
-                demos,
-                pipeline=False,
-            ),
-            logprobs=True,
-            top_logprobs=20,
-            max_tokens=1,
-            parse_fn=extract_claim_logprobs,
-        )
-    ]
-    responses = await asyncio.gather(*model_requests)
-    score = responses[0][0]["score"]
+
+    # Create prompt
+    prompt = get_judge_prompt_fewshot(
+        example,
+        demos,
+        pipeline=False,
+    )
+
+    # Make direct API call to vLLM (single prompt, not batched)
+    response = await model_api(
+        model,
+        prompt,  # Single prompt string
+        logprobs=True,
+        top_logprobs=5,
+        temperature=0.0,
+        max_tokens=1,
+    )
+
+    
+    # Extract logprobs and compute score directly (same as compute_logprobs_batched)
+    try:
+        logprobs = response[0]["response"]["logprobs"]
+        score = get_yes_no_diff_logprobs(logprobs)
+    except Exception as e:
+        print('response: ', response)
+        print(f"Error in predict_assignment extracting score for example {example.get('uid', 'unknown')}: {e}")
+        score = 0
+
+    # Convert score to binary label
     new_label = score > 0
     return int(new_label)
 
 async def predict_assignment_zero_shot(model, example):
-    model_requests = [
-        model_api(
-            model,
-            get_judge_prompt_zeroshot(example, pipeline=False),
-            logprobs=True,
-            top_logprobs=20,
-            max_tokens=1,
-            parse_fn=extract_claim_logprobs,
-        )
-    ]
-    responses = await asyncio.gather(*model_requests)
-    score = responses[0][0]["score"]
+    """
+    Predict label for a single example using zero-shot inference.
+
+    Modified to follow the same pattern as predict_assignment.
+    """
+    # Create zero-shot prompt
+    prompt = get_judge_prompt_zeroshot(example, pipeline=False)
+
+    response = await model_api(
+        model,
+        prompt,
+        logprobs=5,
+        temperature=0.0,
+        max_tokens=1,
+    )
+
+    # Extract logprobs and compute score directly
+    try:
+        if 'Instruct' in model:
+            logprobs = response[0]["response"]["logprobs"][0]
+        else:
+            logprobs = response[0]["response"]["logprobs"]
+        score = get_yes_no_diff_logprobs(logprobs)
+    except Exception as e:
+        print(f"Error in predict_assignment_zero_shot extracting score for example {example.get('uid', 'unknown')}: {e}")
+        score = 0
+
+    # Convert score to binary label
     new_label = score > 0
     return int(new_label)
 
@@ -234,27 +362,39 @@ def get_temperature(
     if schedule == "exp":
         return max(final_temp, initial_temp * (decay_rate**iteration))
     elif schedule == "log":
-        return max(final_temp, initial_temp / (1 + 2 * np.log(1 + iteration)))
+        return max(final_temp, initial_temp / (1 + 4 * np.log(1 + iteration)))
     else:
         assert False
 
 
-def get_energy(metric, alpha):
+def get_energy(metric):
     return metric["train_prob"]
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=27565976)
     parser.add_argument("--testbed", type=str, default="truthfulQA")
-    parser.add_argument("--model", type=str, default="meta-llama/Meta-Llama-3.1-405B")
+    parser.add_argument("--model", type=str, default="meta-llama/Meta-Llama-3.1-70B")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_seed", type=int, default=8)
-    parser.add_argument("--alpha", type=int, default=1)
     parser.add_argument("--K", type=int, default=1500)
     parser.add_argument("--decay", type=float, default=0.99)
     parser.add_argument("--initial_T", type=float, default=10)
     parser.add_argument("--final_T", type=float, default=0.01)
     parser.add_argument("--scheduler", type=str, default="log")
+
+    # vLLM configuration
+
+    parser.add_argument("--tensor_parallel_size", type=int, default=1,
+                        help="Number of GPUs for tensor parallelism")
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.90,
+                        help="Fraction of GPU memory to use (0.0-1.0)")
+    parser.add_argument("--max_model_len", type=int, default=10000,
+                        help="Maximum sequence length (None for model default)")
+    parser.add_argument("--max_num_batched_tokens", type=int, default=262144,
+                        help="Maximum number of batched tokens per iteration")
+
+
     args = parser.parse_args()
     return args
 
@@ -347,7 +487,6 @@ def initialize(train, fewshot_ids, args):
         
     return demonstrations, unlabeled_ids, whole_ids, seed_ids
 
-
 async def icm_main(args):
     train, fewshot_ids = load_train_data(args)
 
@@ -361,7 +500,7 @@ async def icm_main(args):
     }
     
     print('init random labels = ', Counter([i['label'] for i in demonstrations.values() if i['type'] == 'seed']), 'init label acc = ', np.mean([i['label'] == i['vanilla_label'] for i in demonstrations.values() if i['type'] == 'seed']))
-    name = f"{args.testbed}-llama70b-K{args.K}-bc{args.batch_size}_seed{args.seed}-initialsize{args.num_seed}-weighted{args.alpha}-decay{args.decay}-initialT{args.initial_T}-finalT{args.final_T}-scheduler{args.scheduler}"
+    name = f"{args.testbed}-llama70b-K{args.K}-bc{args.batch_size}_seed{args.seed}-initialsize{args.num_seed}-decay{args.decay}-initialT{args.initial_T}-finalT{args.final_T}-scheduler{args.scheduler}"
 
     iter = 0
     flip_cnt = 0
@@ -371,9 +510,8 @@ async def icm_main(args):
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
-
         if iter == 0:
-            pipeline = get_pipeline(
+            pipeline = get_pipeline_batched(  # CHANGED: Use batched version
                 args.model,
                 name=name,
                 num_problems=None,
@@ -382,10 +520,14 @@ async def icm_main(args):
             )
             results = await pipeline.run()
             cur_metric = results["evaluate"]
-             
+
+        if iter % 50 == 0 and iter > 0:
+            print('Iteration: ', iter)
+
         cur_pool = {
             k: v for k, v in demonstrations.items() if v["label"] is not None
         }
+
         while True: # weighted sampling
             candidates_ids = whole_ids
             weights = [1 for _ in range(len(candidates_ids))]
@@ -405,20 +547,13 @@ async def icm_main(args):
         if demonstrations[example_id]["label"] != new_label:
             tmp_demonstrations = deepcopy(demonstrations)
             tmp_demonstrations[example_id]["label"] = new_label
-            dummy_metric = {
-                "train_prob": -1e6,
-                "train_accuracy": 1.0,
-                "train_predict_distribution": {"0": 0, "1": 0},
-                "train_label_distribution": {"0": 0, "1": 0},
-            }
-
             
             tmp_pool = {
                 k: v
                 for k, v in tmp_demonstrations.items()
                 if v["label"] is not None
             }
-            pipeline = get_pipeline(
+            pipeline = get_pipeline_batched(  # CHANGED: Use batched version
                 model=args.model,
                 name=name,
                 num_problems=None,
@@ -432,9 +567,9 @@ async def icm_main(args):
             )
 
             if iter % 10 == 0:
-                print(f"iter = {iter}, pool size = {len(cur_pool)}, cur acc = {cur_metric['train_accuracy']}, new acc = {metric['train_accuracy']}, cur score = {get_energy(cur_metric, args.alpha)}, new score = {get_energy(metric, args.alpha)}")
+                print(f"iter = {iter}, pool size = {len(cur_pool)}, cur acc = {cur_metric['train_accuracy']}, new acc = {metric['train_accuracy']}, cur score = {get_energy(cur_metric)}, new score = {get_energy(metric)}")
 
-            accept_prob = math.exp((get_energy(metric, args.alpha) - get_energy(cur_metric, args.alpha)) / T)
+            accept_prob = math.exp((get_energy(metric) - get_energy(cur_metric)) / T)
             if random.random() < accept_prob:
                 demonstrations = tmp_demonstrations
                 flip_cnt += 1
@@ -450,6 +585,7 @@ async def icm_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+    label_assignments = {}
     for idx, i in enumerate(test):
         i['uid'] = max_uid + 1 + idx
         new_label = await predict_assignment(
@@ -457,11 +593,11 @@ async def icm_main(args):
                 i,
                 demonstrations,
             )
-        
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
-    return correct_cnt / len(test)
+    return correct_cnt / len(test), label_assignments
 
 async def golden_supervision_main(args):
     train, fewshot_ids = load_train_data(args)
@@ -478,6 +614,7 @@ async def golden_supervision_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+    label_assignments = {}
     for idx, i in enumerate(test):
         i['uid'] = max_uid + 1 + idx
         new_label = await predict_assignment(
@@ -485,41 +622,53 @@ async def golden_supervision_main(args):
                 i,
                 demonstrations,
             )
-        
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
-    return correct_cnt / len(test)
+    return correct_cnt / len(test), label_assignments
 
 async def zero_shot_chat_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+
+    # Determine instruct model based on args.model size
+    model_size = args.model.split('-')[-1]
+    model_size_to_instruct = {
+        '8B': 'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
+        '70B': 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo',
+        '405B': 'meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo',
+    }
+    instruct_model = model_size_to_instruct.get(model_size, 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo')
+    label_assignments = {}
     for idx, i in enumerate(test):
         new_label = await predict_assignment_zero_shot(
-                "meta-llama/Meta-Llama-3.1-405B-Instruct",
+                instruct_model,
                 i
             )
-        
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
-    return correct_cnt / len(test)
+        time.sleep(0.5)
+    return correct_cnt / len(test), label_assignments
 
 async def zero_shot_pretrained_main(args):
     #read in test data
     test = load_test_data(args)
     correct_cnt = 0
+    label_assignments = {}
     for idx, i in enumerate(test):
         new_label = await predict_assignment_zero_shot(
                 args.model,
                 i
             )
-        
+        label_assignments[idx] = new_label
         i['new_label'] = new_label
         if i['label'] == i['new_label']:
             correct_cnt += 1
-    return correct_cnt / len(test)
+    return correct_cnt / len(test), label_assignments
 
 def plot_test_accuracies(icm_test_accuracy, golden_supervision_test_accuracy, zero_shot_chat_test_accuracy, zero_shot_pretrained_test_accuracy):
     accuracies = [
@@ -582,19 +731,37 @@ def plot_test_accuracies(icm_test_accuracy, golden_supervision_test_accuracy, ze
 
 async def async_main():
     setup_environment(logger_level="error")
-    args = get_args()  
+    args = get_args()
+
+    valid_models = [
+        'meta-llama/Llama-3.1-405B',
+        'meta-llama/Llama-3.1-70B',
+        'meta-llama/Llama-3.1-8B',
+    ]
+    assert args.model in valid_models, f"args.model must be one of {valid_models}, got {args.model}"
+
     print("task: ", args.testbed)
     random.seed(args.seed)
 
-    icm_test_accuracy = await icm_main(args)
-    golden_supervision_test_accuracy = await golden_supervision_main(args)
-    zero_shot_chat_test_accuracy = await zero_shot_chat_main(args)
-    zero_shot_pretrained_test_accuracy = await zero_shot_pretrained_main(args)
+    print('entering icm_main')
+    icm_test_accuracy, icm_label_assignment = await icm_main(args)
 
-    print(f"ICM test accuracy = {icm_test_accuracy}")
-    print(f"Golden supervision test accuracy = {golden_supervision_test_accuracy}")
-    print(f"Zero shot chat test accuracy = {zero_shot_chat_test_accuracy}")
-    print(f"Zero shot pretrained test accuracy = {zero_shot_pretrained_test_accuracy}")
+    print('entering golden_supervision benchmarking method')
+    golden_supervision_test_accuracy, golden_supervision_label_assignments = await golden_supervision_main(args)
+
+    print('entering zero-shot chat benchmarking method')
+    zero_shot_chat_test_accuracy, zero_shot_chat_label_assignments = await zero_shot_chat_main(args)
+
+    print('entering zero-shot pretrained benchmarking method')
+    zero_shot_pretrained_test_accuracy, zero_shot_pretained_label_assignments = await zero_shot_pretrained_main(args)
+
+    print(f"ICM test accuracy = {icm_test_accuracy}, ICM label assignments = {icm_label_assignment}")
+    print("\n")
+    print(f"Golden supervision test accuracy = {golden_supervision_test_accuracy}, Golden supervision label assignments = {golden_supervision_label_assignments}")
+    print("\n")
+    print(f"Zero shot chat test accuracy = {zero_shot_chat_test_accuracy}, Zero shot chat label assignments = {zero_shot_chat_label_assignments}")
+    print("\n")
+    print(f"Zero shot pretrained test accuracy = {zero_shot_pretrained_test_accuracy}, Zero shot pretrained label assignments = {zero_shot_pretained_label_assignments}")
 
     # Call the plotting function
     plot_test_accuracies(
@@ -605,5 +772,22 @@ async def async_main():
     )
 
 if __name__ == "__main__":
-    model_api = ModelAPI(openai_fraction_rate_limit=0.99)
-    asyncio.run(async_main())
+    args = get_args()
+
+    # Initialize ModelAPI with vLLM configuration from command line args
+    model_api = ModelAPI(
+        openai_fraction_rate_limit=0.99,
+        use_vllm=True,
+        vllm_model_name=args.model,  # Use --model arg for vLLM model name
+        vllm_tensor_parallel_size=args.tensor_parallel_size,
+        vllm_gpu_memory_utilization=args.gpu_memory_utilization,
+        vllm_max_model_len=args.max_model_len,
+        vllm_max_num_batched_tokens=args.max_num_batched_tokens,
+        vllm_enable_prefix_caching=True
+    )
+
+    try:
+        asyncio.run(async_main())
+    finally:
+        # Gracefully shutdown vLLM engine
+        model_api.shutdown()

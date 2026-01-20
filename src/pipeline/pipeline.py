@@ -7,8 +7,6 @@ from functools import wraps
 import random
 from tqdm.auto import tqdm
 
-from aiolimiter import AsyncLimiter
-
 from core.llm_api.llm import ModelAPI
 from src.datatypes.enums import Language
 from src.runners.query_model import QueryConfigBuilder, query_model
@@ -27,20 +25,6 @@ def in_notebook():
     except ImportError:
         return False
     return True
-
-def limit_concurrency_with_retry(model_api, retries=5):
-    semaphore = asyncio.Semaphore(2)
-    rate_limiter = AsyncLimiter(
-        max_rate=100,   # requests
-        time_period=60 # per second
-    )
-
-    async def limited_model_api(*args, **kwargs):
-        async with rate_limiter:
-            async with semaphore:
-                return await model_api(*args, **kwargs)
-
-    return limited_model_api
 
 class Task:
     def __init__(self, name, func, use_cache, dependencies=[]):
@@ -98,27 +82,24 @@ class PipelineConfig:
 class Pipeline:
     # Class variables shared across all instances
     _model_api = None
-    _limited_model_api = None
-    _initialized = False
 
-    def __init__(self, config):
+    def __init__(self, config, model_api=None):
         self.config = config
         self.steps = []
         self.step_names = set()
         self.results = {}
-        
-        # Initialize shared model_api and limited_model_api on first access
-        if not Pipeline._initialized:
+
+        # Use provided model_api or fall back to class-level shared instance
+        if model_api is not None:
+            Pipeline._model_api = model_api
+        elif Pipeline._model_api is None:
+            # Only create a new ModelAPI if none was provided and none exists
             Pipeline._model_api = ModelAPI(
                 self.config.openai_fraction_rate_limit,
                 self.config.organization,
                 self.config.print_prompt_and_response,
             )
-            Pipeline._limited_model_api = limit_concurrency_with_retry(
-                Pipeline._model_api
-            )
-            Pipeline._initialized = True
-        
+
         self.file_sem = asyncio.BoundedSemaphore(self.config.num_open_files)
         self.cost = {"red": 0, "blue": 0}
 
@@ -126,11 +107,6 @@ class Pipeline:
     def model_api(self):
         """Shared ModelAPI instance across all Pipeline instances."""
         return Pipeline._model_api
-
-    @property
-    def limited_model_api(self):
-        """Shared limited ModelAPI instance across all Pipeline instances."""
-        return Pipeline._limited_model_api
 
     def add_load_data_step(
         self, name, dataloader_fn, data_location, dependencies=[], use_cache=None

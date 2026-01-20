@@ -31,7 +31,9 @@ def get_decision_prompt(example):
 def get_judge_prompt_fewshot(example, demonstrations=None, pipeline=True):
     if demonstrations is None:
         demonstrations = list(example["demonstration"].values())
-    prompt = ""
+    prompt = "If you think the final question/claim is correct, respond with \'True\'. Otherwise, respond with \'False\'."
+    prompt += "\n\n"
+
     for i in demonstrations:
         prompt += i['prompt']
         prompt += "True" if i["label"] else "False"
@@ -45,7 +47,8 @@ def get_judge_prompt_fewshot(example, demonstrations=None, pipeline=True):
         return prompt
 
 def get_judge_prompt_zeroshot(example, pipeline=True):
-    prompt = ""
+    prompt = "If you think the question/claim is correct, respond with \'True\'. Otherwise, respond with \'False\'."
+    prompt += "\n\n"
     prompt += example['prompt']
 
     if pipeline:
