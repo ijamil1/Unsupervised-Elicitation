@@ -8,9 +8,9 @@ This repository is a fork of [Jiaxin-Wen/Unsupervised-Elicitation](https://githu
   <img width="70%" src="figure_1.png">
 </p>
 
-**Llama 3.1 8B on TruthfulQA** - The unsupervised ICM algorithm achieves **78% accuracy**, matching fully supervised training (Golden Supervision), and significantly outperforming:
-- Zero-shot Chat (instruction-tuned model): 58%
-- Zero-shot Base (pretrained model): 42%
+**Llama 3.1 8B on TruthfulQA** - In-context learning with ICM  achieves **78% accuracy**, nearly matching using golden labels, and significantly outperforming:
+- Zero-shot Chat (instruction-tuned model): 63%
+- Zero-shot Base (pretrained model): 52%
 
 ## What's New in This Fork
 
