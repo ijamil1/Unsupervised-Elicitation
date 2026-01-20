@@ -1,6 +1,6 @@
 # Unsupervised Elicitation with vLLM Self-Hosting
 
-This repository is a fork of [Jiaxin-Wen/Unsupervised-Elicitation](https://github.com/Jiaxin-Wen/Unsupervised-Elicitation), extended with vLLM self-hosting support, computation of comprehensive baselines, and performance visualization tools.
+This repository is a fork of [Jiaxin-Wen/Unsupervised-Elicitation](https://github.com/Jiaxin-Wen/Unsupervised-Elicitation). This fork refactors the code to use vLLM, which downloads and self-hosts the base model directly within the Python script (no separate server deployment required). This enables multi-GPU tensor parallelism and supports running larger models (8B, 70B, 405B) given the necessary hardware.
 
 ## Results
 
@@ -14,23 +14,18 @@ This repository is a fork of [Jiaxin-Wen/Unsupervised-Elicitation](https://githu
 
 ## What's New in This Fork
 
-### vLLM In-Process Inference
-- Eliminated HTTP overhead by loading the model directly in the same Python process
-- Batched inference for all examples in a single call
-- Automatic prefix caching (critical for ICM - shared demonstration prefixes across all queries)
-- Support for multi-GPU tensor parallelism (8B, 70B, and 405B models)
+### vLLM Self-Hosting
+This fork refactors the code to use vLLM, which downloads and self-hosts the base model directly within the Python script (no separate server deployment required and no API calls required for ICM)
 
 ### Comprehensive Baselines
-The main script now runs four evaluation modes:
-1. **ICM (Unsupervised)** - The core algorithm using simulated annealing and many-shot in-context learning
-2. **Golden Supervision** - Upper bound using ground truth labels for many-shot demonstrations
-3. **Zero-shot Chat** - Instruction-tuned model evaluation (via Together AI API)
-4. **Zero-shot Pretrained** - Base model evaluation without demonstrations
+The main script now runs four evaluation modes in a single script-ICM.py:
+1. **ICM (Unsupervised)** - The core algorithm: Internal Coherence Maximization; uses model-generated labels for many-shot in-context learning with the base model
+2. **Golden Supervision** - Uses ground truth labels for many-shot in-context learning with the base model
+3. **Zero-shot Chat** - zero-shot inference with the instruction-tuned model (via Together AI API)
+4. **Zero-shot Pretrained** - zero-shot inference with the base model
 
 ### Additional Changes
-- Simplified logprobs extraction for vLLM compatibility
 - Graceful engine shutdown to prevent GPU memory leaks
-- Dynamic temperature scheduling with configurable annealing parameters
 - Performance plotting that generates `figure_1.png` after each run
 - Together AI integration for serverless chat model inference
 
