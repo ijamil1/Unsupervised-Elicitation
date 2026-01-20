@@ -213,15 +213,15 @@ python ICM.py \
     --testbed truthfulQA \
     --tensor_parallel_size 1 \
     --gpu_memory_utilization 0.90 \
-    --K 500
+    --K 1500
 
 # 70B model with 4 GPUs
 python ICM.py \
-    --model meta-llama/Meta-Llama-3.1-70B \
+    --model meta-llama/Llama-3.1-70B \
     --testbed truthfulQA \
     --tensor_parallel_size 4 \
     --gpu_memory_utilization 0.90 \
-    --max_num_batched_tokens 200000 \
+    --max_num_batched_tokens 100000 \
     --K 1500 
 
 # 405B model with 8 GPUs

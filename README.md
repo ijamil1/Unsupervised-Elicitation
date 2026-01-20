@@ -1,87 +1,110 @@
-## Unsupervised Elicitation of Language Models
+# Unsupervised Elicitation with vLLM Self-Hosting
 
-We introduce a new unsupervised algorithm for eliciting skills from pretrained language models. This algorithm is competitive with training on human labels on common misconceptions (TruthfulQA), math (GSM8k-verification), and helpfulness reward modeling (Alpaca). Without supervision, we train a helpful chat assistant from the Haiku 3.5 base model that outperforms a similarly trained human-supervised baseline.
+This repository is a fork of [Jiaxin-Wen/Unsupervised-Elicitation](https://github.com/Jiaxin-Wen/Unsupervised-Elicitation), extended with vLLM self-hosting support, computation of comprehensive baselines, and performance visualization tools.
 
-
-<p align="center">
-  <img width="100%" src="figures/llama_performance.png">
-</p>
+## Results
 
 <p align="center">
-  <img width="100%" src="figures/claude_performance.png">
+  <img width="70%" src="figure_1.png">
 </p>
 
+**Llama 3.1 8B on TruthfulQA** - The unsupervised ICM algorithm achieves **78% accuracy**, matching fully supervised training (Golden Supervision), and significantly outperforming:
+- Zero-shot Chat (instruction-tuned model): 58%
+- Zero-shot Base (pretrained model): 42%
 
-## Setup
+## What's New in This Fork
 
-### Environment
+### vLLM In-Process Inference
+- Eliminated HTTP overhead by loading the model directly in the same Python process
+- Batched inference for all examples in a single call
+- Automatic prefix caching (critical for ICM - shared demonstration prefixes across all queries)
+- Support for multi-GPU tensor parallelism (8B, 70B, and 405B models)
 
-1. create conda environment: `conda env create -f env.yaml`
+### Comprehensive Baselines
+The main script now runs four evaluation modes:
+1. **ICM (Unsupervised)** - The core algorithm using simulated annealing and many-shot in-context learning
+2. **Golden Supervision** - Upper bound using ground truth labels for many-shot demonstrations
+3. **Zero-shot Chat** - Instruction-tuned model evaluation (via Together AI API)
+4. **Zero-shot Pretrained** - Base model evaluation without demonstrations
 
-2. install package `pip install -e .`
+### Additional Changes
+- Simplified logprobs extraction for vLLM compatibility
+- Graceful engine shutdown to prevent GPU memory leaks
+- Dynamic temperature scheduling with configurable annealing parameters
+- Performance plotting that generates `figure_1.png` after each run
+- Together AI integration for serverless chat model inference
 
-### API for Pretrained Base Models
+## Quick Start
 
-You should have access to an API for pretrained base models, which can return top-K (e.g. 20) logprobs.
+### Prerequisites
+- Python 3.9+
+- CUDA 11.8+ or 12.1+
+- GPU(s) with sufficient memory
+- HuggingFace account with Llama model access
 
-Since most public api servers (e.g. openrouter) only support post-trained chat models, you probably need to deploy pretrained base models yourself. For example, we use vllm to deploy llama models in our experiments.
+### Installation
 
-In particular, we highly recommend activating the `prefix caching` feature to accelerate the experiments, because our algorithm will create many API queries with similar prefixes.
+```bash
+# Clone and setup
+git clone https://github.com/ijamil1/Unsupervised-Elicitation.git
+cd Unsupervised-Elicitation
+git checkout vllm-integration
 
+# Create environment and install
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
 
-### Secrets
-
-You should create a file called SECRETS at the root of the repository with the following contents:
+# Setup secrets file
+cat > SECRETS << 'EOF'
+HF_TOKEN=your_huggingface_token
+TOGETHER_API_KEY=your_together_api_key  # Optional, for chat model baseline
+VLLM_BASE_URL=http://localhost:8000
+EOF
 ```
-LLAMA_API_BASE=<your_api_base_url>
-NYU_ORG=None
-ARG_ORG=None
-API_KEY=None
-```
 
-### Data Preparation
+### Run Experiments
 
-Download data from this [link](https://drive.google.com/file/d/1AJdFJO9IHfOnWHyIlGvInyndLu6EvcfV/view?usp=sharing).
-Put it under the `data/` directory.
-
-## Run
-
-### ICM
-<p align="center">
-  <img width="100%" src="figures/algorithm.png">
-</p>
-
-
-The main script is located in `src/experiments/ICM.py`
-An example command for labeling truthfulQA data:
-```
+```bash
 cd src/experiments
-python ICM.py --testbed truthfulQA --alpha 50
+
+# 8B model on single GPU
+python ICM.py \
+    --model meta-llama/Llama-3.1-8B \
+    --testbed truthfulQA \
+    --tensor_parallel_size 1 \
+    --gpu_memory_utilization 0.90 \
+    --K 1500
+
+# 70B model with 4 GPUs
+python ICM.py \
+    --model meta-llama/Llama-3.1-70B \
+    --testbed truthfulQA \
+    --tensor_parallel_size 4 \
+    --gpu_memory_utilization 0.90 \
+    --K 1500
 ```
 
-Arguments:
+## Configuration
 
-- `--seed`: random seed
-- `--alpha`: the coefficient for mutual predictability in our scoring function
-- `--testbed`: name of the testbed, e.g., alpaca, truthfulqa, gsm8k
-- `--model`: name of the pretrained base model, e.g., meta-llama/Llama-3.1-70B
-- `--batch_size`: size of a minibatch when running ICM on large datasets that cannot be fit in to the context all at once[^1]. 
-[^1]: Since ICM relies on in-context learning, it might not be able to fix all datapoints in the context at once. In our experiments, we split the whole dataset into $N$ batches (e.g., each batch consists of 256 datapoints) based on the context limit and data length, and run ICM independently on each batch.
-- `--num_seed`: number of randomly labeled datapoints in the beginning.
-- `--K`: max iteration
-- `--consistency_fix_K`: max iteration for consistencyfix
-- `--decay`: decay rate for simulating annealing
-- `--initial_T`: initial temprature for simulated annealing
-- `--final_T`: final temperature for simulated annealing
-- `--scheduler`: decay scheduler for simulated annealing
+### Key Arguments
 
-### Iterative Fine-tuning
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--model` | `meta-llama/Llama-3.1-70B` | HuggingFace model name |
+| `--testbed` | `truthfulQA` | Dataset (truthfulQA, alpaca, gsm8k) |
+| `--batch_size` | `256` | Examples per ICM batch |
+| `--K` | `1500` | Maximum iterations |
+| `--alpha` | `1` | Scoring coefficient for mutual predictability |
+| `--tensor_parallel_size` | `1` | Number of GPUs for tensor parallelism |
+| `--gpu_memory_utilization` | `0.90` | Fraction of GPU memory to use |
+| `--initial_T` | `1.0` | Initial temperature for simulated annealing |
+| `--final_T` | `0.01` | Final temperature for simulated annealing |
 
-Instead of using the initial pretrained model ($M_0$) to label all $N$ batches, we do iterative fine-tuning: 
 
-- fine-tune the pretrained model on the first $j$ batches to obtain $M_j$
+## Acknowledgments
 
-- use $M_j$ to label the $j+1$-th batch.
-
-We use [axolotl](https://github.com/axolotl-ai-cloud/axolotl) for fine-tuning.
+- Original implementation: https://github.com/Jiaxin-Wen/Unsupervised-Elicitation (which is based on the following paper: https://arxiv.org/pdf/2506.10139v1)
+- Motivation: Praxis Research sprints (https://praxis-research.org/sprints/unsupervised-elicitation); PI: Dr. Shi Feng
+- Built on [vLLM](https://github.com/vllm-project/vllm) for efficient self-hosted inference and TogetherAI for serverless inference for the chat/instruct models
 
