@@ -48,7 +48,7 @@ The main script now runs four evaluation modes:
 # Clone and setup
 git clone https://github.com/ijamil1/Unsupervised-Elicitation.git
 cd Unsupervised-Elicitation
-git checkout vllm-integration
+
 
 # Create environment and install
 python3 -m venv venv
